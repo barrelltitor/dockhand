@@ -39,10 +39,11 @@
 		initialStackName?: string; // Pre-fill stack name (for library deploy)
 		readonly?: boolean; // View compose content without allowing local changes
 		onClose: () => void;
+		onConvertToGit?: (() => void) | null;
 		onSuccess: () => void; // Called after create or save
 	}
 
-	let { open = $bindable(), mode: propMode, stackName: propStackName = '', initialCompose, initialStackName, readonly = false, onClose, onSuccess }: Props = $props();
+	let { open = $bindable(), mode: propMode, stackName: propStackName = '', initialCompose, initialStackName, readonly = false, onClose, onConvertToGit = null, onSuccess }: Props = $props();
 
 	// Local effective state - can transition from create → edit after failed deploy
 	let mode = $state(propMode);
@@ -1643,13 +1644,21 @@
 
 		<!-- Footer -->
 		<div class="px-5 py-2.5 border-t border-zinc-200 dark:border-zinc-700 flex items-center justify-between flex-shrink-0">
-			<div class="text-xs text-zinc-500 dark:text-zinc-400">
-				{#if readonly}
-					Read-only
-				{:else if isDirty}
-					<span class="text-amber-600 dark:text-amber-500">Unsaved changes</span>
-				{:else}
-					No changes
+			<div class="flex items-center gap-2">
+				<div class="text-xs text-zinc-500 dark:text-zinc-400">
+					{#if readonly}
+						Read-only
+					{:else if isDirty}
+						<span class="text-amber-600 dark:text-amber-500">Unsaved changes</span>
+					{:else}
+						No changes
+					{/if}
+				</div>
+				{#if !readonly && mode === 'edit' && onConvertToGit}
+					<Button variant="outline" onclick={onConvertToGit} disabled={saving || loading}>
+						<GitGraph class="w-4 h-4" />
+						Convert to Git
+					</Button>
 				{/if}
 			</div>
 
