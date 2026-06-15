@@ -3,7 +3,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
 	import { Input } from '$lib/components/ui/input';
-	import { Plus, Check, RefreshCw } from 'lucide-svelte';
+	import { Plus, Check, RefreshCw, Wifi, CircleCheck, CircleX } from 'lucide-svelte';
 	import { focusFirstInput } from '$lib/utils';
 
 	export interface Registry {
@@ -32,6 +32,8 @@
 	let formPassword = $state('');
 	let formError = $state('');
 	let formSaving = $state(false);
+	let testResult = $state<{ success: boolean; message: string } | null>(null);
+	let testLoading = $state(false);
 
 	function resetForm() {
 		formName = '';
@@ -40,6 +42,8 @@
 		formPassword = '';
 		formError = '';
 		formSaving = false;
+		testResult = null;
+		testLoading = false;
 	}
 
 	// Initialize form when registry changes or modal opens
@@ -51,11 +55,51 @@
 				formUsername = registry.username || '';
 				formPassword = '';
 				formError = '';
+			testResult = null;
 			} else {
 				resetForm();
 			}
 		}
 	});
+
+	async function testConnection() {
+		if (!formUrl.trim()) {
+			formError = 'URL is required to test';
+			return;
+		}
+
+		testLoading = true;
+		testResult = null;
+		formError = '';
+
+		try {
+			const body: Record<string, any> = { url: formUrl.trim() };
+
+			// For edit mode with no new password, use the saved registry's credentials
+			if (isEditing && !formPassword && registry?.id) {
+				// If username present but no new password, test via registry ID to use stored creds
+				if (formUsername.trim()) {
+					body.registryId = registry.id;
+					delete body.url;
+				}
+			} else {
+				if (formUsername.trim()) body.username = formUsername.trim();
+				if (formPassword) body.password = formPassword;
+			}
+
+			const response = await fetch('/api/registries/test', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+
+			testResult = await response.json();
+		} catch {
+			testResult = { success: false, message: 'Failed to test connection' };
+		} finally {
+			testLoading = false;
+		}
+	}
 
 	async function save() {
 		if (!formName.trim() || !formUrl.trim()) {
@@ -136,7 +180,26 @@
 				</div>
 			</div>
 		</div>
+		{#if testResult}
+			<div class="flex items-center gap-2 text-sm {testResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
+				{#if testResult.success}
+					<CircleCheck class="w-4 h-4 shrink-0" />
+				{:else}
+					<CircleX class="w-4 h-4 shrink-0" />
+				{/if}
+				<span>{testResult.message}</span>
+			</div>
+		{/if}
 		<Dialog.Footer>
+			<Button variant="outline" onclick={testConnection} disabled={testLoading}>
+				{#if testLoading}
+					<RefreshCw class="w-4 h-4 animate-spin" />
+				{:else}
+					<Wifi class="w-4 h-4" />
+				{/if}
+				Test
+			</Button>
+			<div class="flex-1"></div>
 			<Button variant="outline" onclick={handleClose}>Cancel</Button>
 			<Button onclick={save} disabled={formSaving}>
 				{#if formSaving}

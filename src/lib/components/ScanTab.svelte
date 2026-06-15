@@ -228,7 +228,7 @@
 					<Shield class="w-4 h-4 text-muted-foreground" />
 					<span class="text-sm text-muted-foreground">Ready to scan</span>
 				{:else if status === 'scanning'}
-					<Loader2 class="w-4 h-4 animate-spin text-blue-600" />
+					<Shield class="w-4 h-4 animate-spin text-blue-600" />
 					<span class="text-sm">Scanning for vulnerabilities...</span>
 				{:else if status === 'complete'}
 					{#if hasCriticalOrHigh}

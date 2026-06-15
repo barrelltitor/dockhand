@@ -15,6 +15,21 @@ import {
 	type GitStackWithRepo
 } from './db';
 import { deployStack, getStackDir } from './stacks';
+import {
+	parseManifest,
+	serializeManifest,
+	hashDirFiles,
+	computeDeletions,
+	buildNextManifest,
+	buildSyncChangeSummary,
+	formatChangeTable,
+	skipReasonMessage,
+	deletionSafetyCheck,
+	type DeletionPlan,
+	type DeletionApplyResult,
+	type DeletionSkip,
+	type SyncManifest
+} from './git-deletions';
 
 const MERGED_CA_BUNDLE_PATH = '/tmp/dockhand-merged-ca-bundle.crt';
 let mergedCaBundleReady = false;
@@ -363,6 +378,93 @@ async function getChangedFilesInDir(
 	return { changed: changedFiles.length > 0, files: changedFiles };
 }
 
+/**
+ * Compute the deletion plan for a sync: hash the new clone's compose dir and
+ * diff against the manifest from the last sync. Deletions converge the deploy
+ * dir toward the clone state; the applier additionally verifies each file's
+ * disk hash. A sanity guard blocks ALL deletions when the clone walk looks
+ * broken (empty, or missing the compose file).
+ */
+async function computeSyncDeletionPlan(options: {
+	logPrefix: string;
+	composeDir: string; // absolute path inside the clone
+	composeFileName: string | undefined; // compose file relative to composeDir
+	rawManifest: string | null | undefined;
+}): Promise<{ plan: DeletionPlan; newFiles: Record<string, string>; previousManifest: SyncManifest }> {
+	const { logPrefix, composeDir, composeFileName, rawManifest } = options;
+
+	const previousManifest = parseManifest(rawManifest);
+	const newFiles = hashDirFiles(composeDir);
+
+	const manifestSize = Object.keys(previousManifest.files).length;
+	console.log(`${logPrefix} Deletion sync: manifest has ${manifestSize} file(s)${manifestSize === 0 ? ' (first sync — nothing will be deleted)' : ''}`);
+
+	// First sync / legacy manifest: nothing was recorded, so nothing can be deleted
+	if (manifestSize === 0) {
+		return { plan: { toDelete: [], skipped: [] }, newFiles, previousManifest };
+	}
+
+	const blocked = deletionSafetyCheck(previousManifest.files, newFiles, composeFileName);
+	if (blocked) {
+		console.warn(`${logPrefix} Deletion sync: ${blocked}`);
+		return { plan: { toDelete: [], skipped: [] }, newFiles, previousManifest };
+	}
+
+	const plan = computeDeletions(previousManifest.files, newFiles);
+
+	for (const file of plan.toDelete) {
+		console.log(`${logPrefix} Deletion sync: will remove "${file.path}" — deleted from the repository`);
+	}
+	for (const skip of plan.skipped) {
+		console.warn(`${logPrefix} Deletion sync: keeping "${skip.path}" — ${skipReasonMessage(skip.reason)}`);
+	}
+
+	return { plan, newFiles, previousManifest };
+}
+
+/**
+ * Persist the manifest after a deploy and log the per-file change summary.
+ * Called only after a successful deploy (locally applied or agent-confirmed).
+ */
+async function finalizeDeletionSync(options: {
+	stackId: number;
+	logPrefix: string;
+	previousManifest: SyncManifest;
+	newCommitFull: string;
+	newFiles: Record<string, string>;
+	plan: DeletionPlan;
+	applyResult: DeletionApplyResult | undefined;
+	onLine?: (line: string) => void; // extra sink (job output)
+}): Promise<void> {
+	const { stackId, logPrefix, previousManifest, newCommitFull, newFiles, plan, applyResult, onLine } = options;
+
+	// No apply result means deletions were requested but nothing reported back
+	// (defensive — executors always return one). Logged as skips; skips are final.
+	const effectiveApply: DeletionApplyResult = applyResult ?? {
+		deleted: [],
+		skipped: plan.toDelete.map((f): DeletionSkip => ({ path: f.path, reason: 'apply-failed' }))
+	};
+
+	// Pass only the plan-stage skips; buildSyncChangeSummary already merges
+	// in effectiveApply.skipped itself. Concatenating here duplicated every
+	// apply-stage skip (locally-modified, agent-no-support, apply-failed).
+	const summary = buildSyncChangeSummary(previousManifest.files, newFiles, effectiveApply, plan.skipped);
+	const tableLines = formatChangeTable(summary);
+
+	console.log(`${logPrefix} Sync file changes: ${tableLines[0]}`);
+	for (const line of tableLines.slice(1)) {
+		console.log(`${logPrefix}   ${line}`);
+	}
+	if (onLine) {
+		onLine(`File changes: ${tableLines[0]}`);
+		for (const line of tableLines.slice(1)) onLine(line);
+	}
+
+	const nextManifest = buildNextManifest(newCommitFull, newFiles);
+	await updateGitStack(stackId, { syncedFiles: serializeManifest(nextManifest) });
+	console.log(`${logPrefix} Manifest persisted: ${Object.keys(nextManifest.files).length} file(s) at commit ${nextManifest.commit?.substring(0, 7)}`);
+}
+
 export interface SyncResult {
 	success: boolean;
 	commit?: string;
@@ -375,6 +477,11 @@ export interface SyncResult {
 	error?: string;
 	updated?: boolean;
 	changedFiles?: string[]; // List of files that changed (for logging/debugging)
+	// Deletion sync (#966/#1162): manifest-vs-clone data
+	deletionPlan?: DeletionPlan; // Files safe to delete (manifest entries absent from the new clone) + plan-stage skips
+	newFiles?: Record<string, string>; // path → sha256 of files in the new clone (next manifest)
+	newCommitFull?: string; // Full 40-char commit hash (manifest commit)
+	previousManifest?: SyncManifest; // Manifest from the last successful sync
 }
 
 export interface TestResult {
@@ -954,6 +1061,14 @@ export async function syncGitStack(stackId: number): Promise<SyncResult> {
 			console.log(`${logPrefix} No env file path configured`);
 		}
 
+		// Deletion sync (#966): manifest-vs-clone deletion plan
+		const deletionData = await computeSyncDeletionPlan({
+			logPrefix,
+			composeDir,
+			composeFileName,
+			rawManifest: gitStack.syncedFiles
+		});
+
 		// Update git stack status
 		await updateGitStack(stackId, {
 			syncStatus: 'synced',
@@ -982,7 +1097,11 @@ export async function syncGitStack(stackId: number): Promise<SyncResult> {
 			envFileVars,
 			envFileName,
 			updated,
-			changedFiles
+			changedFiles,
+			deletionPlan: deletionData.plan,
+			newFiles: deletionData.newFiles,
+			newCommitFull: newCommit,
+			previousManifest: deletionData.previousManifest
 		};
 	} catch (error: any) {
 		cleanupSshKey(credential);
@@ -1065,7 +1184,8 @@ export async function deployGitStack(stackId: number, options?: { force?: boolea
 		forceRecreate,
 		build: gitStack.buildOnDeploy,
 		noBuildCache: gitStack.noBuildCache,
-		pullPolicy: gitStack.repullImages ? 'always' : undefined
+		pullPolicy: gitStack.repullImages ? 'always' : undefined,
+		filesToDelete: syncResult.deletionPlan?.toDelete
 	});
 
 	console.log(`${logPrefix} ----------------------------------------`);
@@ -1076,6 +1196,19 @@ export async function deployGitStack(stackId: number, options?: { force?: boolea
 	if (result.error) console.log(`${logPrefix} Error:`, result.error);
 
 	if (result.success) {
+		// Deletion sync: persist manifest + log per-file change summary
+		if (syncResult.previousManifest && syncResult.newFiles && syncResult.newCommitFull && syncResult.deletionPlan) {
+			await finalizeDeletionSync({
+				stackId,
+				logPrefix,
+				previousManifest: syncResult.previousManifest,
+				newCommitFull: syncResult.newCommitFull,
+				newFiles: syncResult.newFiles,
+				plan: syncResult.deletionPlan,
+				applyResult: result.deletion
+			});
+		}
+
 		// Record the stack source with resolved compose path for consistency
 		const stackDir = await getStackDir(gitStack.stackName, gitStack.environmentId);
 		const resolvedComposePath = syncResult.composeFileName
@@ -1306,6 +1439,15 @@ export async function deployGitStackWithProgress(
 			}
 		}
 
+		// Deletion sync (#966): manifest-vs-clone deletion plan
+		const logPrefix = `[Stack:${gitStack.stackName}]`;
+		const deletionData = await computeSyncDeletionPlan({
+			logPrefix,
+			composeDir,
+			composeFileName: progressComposeFileName,
+			rawManifest: gitStack.syncedFiles
+		});
+
 		// Update git stack status
 		await updateGitStack(stackId, {
 			syncStatus: 'synced',
@@ -1319,6 +1461,14 @@ export async function deployGitStackWithProgress(
 		// Step 5: Deploying stack
 		// Uses `docker compose up -d --remove-orphans` which only recreates changed services
 		onProgress({ status: 'deploying', message: `Deploying ${gitStack.stackName}...`, step: 5, totalSteps });
+		if (deletionData.plan.toDelete.length > 0) {
+			onProgress({
+				status: 'deploying',
+				message: `Removing ${deletionData.plan.toDelete.length} file(s) deleted from the repository...`,
+				step: 5,
+				totalSteps
+			});
+		}
 
 		// Determine env filename relative to compose dir (same logic as syncGitStack)
 		let envFileName: string | undefined;
@@ -1338,10 +1488,24 @@ export async function deployGitStackWithProgress(
 			envFileName, // Env file relative to compose dir (for --env-file flag, optional)
 			build: gitStack.buildOnDeploy,
 			noBuildCache: gitStack.noBuildCache,
-			pullPolicy: gitStack.repullImages ? 'always' : undefined
+			pullPolicy: gitStack.repullImages ? 'always' : undefined,
+			filesToDelete: deletionData.plan.toDelete
 		});
 
 		if (result.success) {
+			// Deletion sync: persist manifest + log per-file change summary.
+			// onLine feeds the per-file change table into the deploy progress popover.
+			await finalizeDeletionSync({
+				stackId,
+				logPrefix,
+				previousManifest: deletionData.previousManifest,
+				newCommitFull: newCommit,
+				newFiles: deletionData.newFiles,
+				plan: deletionData.plan,
+				applyResult: result.deletion,
+				onLine: (line) => onProgress({ status: 'deploying', message: line, step: 5, totalSteps })
+			});
+
 			// Record the stack source with resolved compose path for consistency
 			const stackDir = await getStackDir(gitStack.stackName, gitStack.environmentId);
 			const resolvedComposePath = join(stackDir, progressComposeFileName);

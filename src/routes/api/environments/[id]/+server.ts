@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { join } from 'path';
-import { existsSync, rmSync } from 'fs';
+import { existsSync, rmSync, renameSync } from 'fs';
 import type { RequestHandler } from './$types';
 import { getEnvironment, updateEnvironment, deleteEnvironment, getEnvironmentPublicIps, setEnvironmentPublicIp, deleteEnvironmentPublicIp, deleteEnvUpdateCheckSettings, deleteImagePruneSettings, getGitStacksForEnvironmentOnly, deleteGitStack } from '$lib/server/db';
 import { clearDockerClientCache } from '$lib/server/docker';
@@ -11,6 +11,7 @@ import { auditEnvironment } from '$lib/server/audit';
 import { refreshSubprocessEnvironments } from '$lib/server/subprocess-manager';
 import { serializeLabels, parseLabels, MAX_LABELS } from '$lib/utils/label-colors';
 import { cleanPem } from '$lib/utils/pem';
+import { validateEnvName } from '$lib/utils/env-name';
 import { unregisterSchedule } from '$lib/server/scheduler';
 import { closeEdgeConnection } from '$lib/server/hawser';
 import { computeAuditDiff } from '$lib/utils/diff';
@@ -63,6 +64,65 @@ export const PUT: RequestHandler = async (event) => {
 		}
 
 		const data = await request.json();
+
+		// #1179: validate name if it's being changed. Existing invalid names are
+		// not auto-corrected — only writes go through this check.
+		const isRename = data.name !== undefined && data.name !== oldEnv.name;
+		if (isRename) {
+			const nameCheck = validateEnvName(data.name);
+			if (!nameCheck.ok) {
+				return json({ error: nameCheck.reason }, { status: 400 });
+			}
+		}
+
+		// Rename on-disk directories BEFORE the DB write. If the fs rename
+		// fails (cross-mount EXDEV, perm error, target exists), we surface a
+		// 409 and leave the DB untouched — better than the previous behavior
+		// of silently orphaning stacks under the old name.
+		//
+		// Applies to ALL connection types. For socket/direct envs the staging
+		// dir IS the deployed dir, so containers need a redeploy after rename
+		// (see client warning). For Hawser envs the agent owns the deployed
+		// dir on the remote host and isn't affected, but Dockhand still keeps
+		// a local staging copy under stacks/<envName>/<stackName>/ (for the
+		// in-app editor) and ALL git stacks clone to git-repos/<envName>/
+		// regardless of where they ultimately deploy — so the rename matters
+		// locally for every env type.
+		if (isRename) {
+			const stacksDir = getStacksDir();
+			const gitReposDir = getGitReposDir();
+			const oldStacks = join(stacksDir, oldEnv.name);
+			const newStacks = join(stacksDir, data.name);
+			const oldRepos = join(gitReposDir, oldEnv.name);
+			const newRepos = join(gitReposDir, data.name);
+
+			// Refuse to overwrite a target dir that already holds someone
+			// else's data.
+			if (existsSync(oldStacks) && existsSync(newStacks)) {
+				return json({
+					error: `Cannot rename: ${newStacks} already exists. Pick a different name or move that directory out of the way.`
+				}, { status: 409 });
+			}
+			if (existsSync(oldRepos) && existsSync(newRepos)) {
+				return json({
+					error: `Cannot rename: ${newRepos} already exists. Pick a different name or move that directory out of the way.`
+				}, { status: 409 });
+			}
+
+			try {
+				if (existsSync(oldStacks)) renameSync(oldStacks, newStacks);
+				if (existsSync(oldRepos)) renameSync(oldRepos, newRepos);
+			} catch (err: any) {
+				// Best-effort rollback if the second rename failed after the first
+				// succeeded. Avoids leaving the filesystem in a split state.
+				try { if (existsSync(newStacks) && !existsSync(oldStacks)) renameSync(newStacks, oldStacks); } catch {}
+				try { if (existsSync(newRepos) && !existsSync(oldRepos)) renameSync(newRepos, oldRepos); } catch {}
+				const code = err?.code === 'EXDEV'
+					? 'EXDEV: stacks dir is on a different filesystem from the rename target. Move it back to the same filesystem to rename this environment.'
+					: (err?.message || 'Rename failed');
+				return json({ error: code }, { status: 409 });
+			}
+		}
 
 		// Clear cached Docker client before updating
 		clearDockerClientCache(id);

@@ -14,6 +14,7 @@
 	import { canAccess, authStore } from '$lib/stores/auth';
 	import { toast } from 'svelte-sonner';
 	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
+	import AnimateIconsToggle from '$lib/components/AnimateIconsToggle.svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 
 	// General settings state - these derive from the store
@@ -375,6 +376,7 @@ services:
 						<!-- Right column: Theme settings (always shown, with hint when auth enabled) -->
 						<div class="space-y-4">
 							<ThemeSelector />
+							<AnimateIconsToggle />
 							{#if $authStore.authEnabled}
 								<div class="text-xs text-muted-foreground flex items-start gap-1.5 mt-2 p-2 bg-muted/50 rounded-md">
 									<HelpCircle class="w-3.5 h-3.5 shrink-0 mt-0.5" />

@@ -7,6 +7,7 @@ import { invalidateTokenCacheForUser } from '$lib/server/api-tokens';
 import { refreshSubprocessEnvironments } from '$lib/server/subprocess-manager';
 import { serializeLabels, parseLabels, MAX_LABELS } from '$lib/utils/label-colors';
 import { cleanPem } from '$lib/utils/pem';
+import { validateEnvName } from '$lib/utils/env-name';
 
 export const GET: RequestHandler = async ({ cookies }) => {
 	const auth = await authorize(cookies);
@@ -71,8 +72,9 @@ export const POST: RequestHandler = async (event) => {
 	try {
 		const data = await request.json();
 
-		if (!data.name) {
-			return json({ error: 'Name is required' }, { status: 400 });
+		const nameCheck = validateEnvName(data.name);
+		if (!nameCheck.ok) {
+			return json({ error: nameCheck.reason }, { status: 400 });
 		}
 
 		// Check if environment with this name already exists

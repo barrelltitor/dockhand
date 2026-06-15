@@ -98,6 +98,35 @@ const envNames: Map<number, string> = new Map();
 // Track which envIds are currently configured in Go
 const configuredEnvs: Set<number> = new Set();
 
+// Health status transition tracking: only store DB events when status changes
+// Key: `${envId}-${containerId}` → last known sub-status (e.g. "healthy", "unhealthy")
+const lastHealthStatus: Map<string, string> = new Map();
+
+/**
+ * Check if a health_status event represents a transition (and should be stored in DB).
+ * Non-health events always return true. Repeated identical health statuses return false.
+ * Also clears tracking on container destroy/die events.
+ */
+export function isHealthTransition(envId: number, containerId: string, action: string): boolean {
+	// Clear tracking when container is removed
+	if (action === 'destroy' || action === 'die') {
+		lastHealthStatus.delete(`${envId}-${containerId}`);
+		return true;
+	}
+
+	if (!action.startsWith('health_status')) return true;
+
+	// Extract sub-status: "health_status: healthy" → "healthy"
+	const subStatus = action.includes(':') ? action.split(':').pop()!.trim() : action;
+	const key = `${envId}-${containerId}`;
+	const previous = lastHealthStatus.get(key);
+
+	if (previous === subStatus) return false; // Same status, skip DB write
+
+	lastHealthStatus.set(key, subStatus);
+	return true;
+}
+
 // Dedup cleanup interval
 let dedupCleanupInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -264,6 +293,12 @@ async function handleContainerEvent(msg: GoMessage): Promise<void> {
 	if (recentEvents.size > MAX_DEDUP_CACHE_SIZE) cleanupRecentEvents();
 
 	const timestamp = new Date(Math.floor(event.timeNano / 1000000)).toISOString();
+
+	// Skip redundant health_status events (only store transitions: healthy↔unhealthy)
+	if (!isHealthTransition(msg.envId, containerId, action)) {
+		rssAfterOp('events', before);
+		return;
+	}
 
 	// Sub-category: DB insert
 	const dbBefore = rssBeforeOp();

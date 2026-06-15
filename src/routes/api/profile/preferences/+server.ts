@@ -45,7 +45,7 @@ export const PUT: RequestHandler = async ({ request, cookies }) => {
 		const validTerminalFontIds = monospaceFonts.map(f => f.id);
 		const validFontSizes = ['xsmall', 'small', 'normal', 'medium', 'large', 'xlarge'];
 
-		const updates: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string } = {};
+		const updates: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string; animateIcons?: boolean } = {};
 
 		if (data.lightTheme !== undefined) {
 			if (!validLightThemeIds.includes(data.lightTheme)) {
@@ -94,6 +94,13 @@ export const PUT: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Invalid editor font' }, { status: 400 });
 			}
 			updates.editorFont = data.editorFont;
+		}
+
+		if (data.animateIcons !== undefined) {
+			if (typeof data.animateIcons !== 'boolean') {
+				return json({ error: 'Invalid animateIcons' }, { status: 400 });
+			}
+			updates.animateIcons = data.animateIcons;
 		}
 
 		await setUserThemePreferences(currentUser.id, updates);

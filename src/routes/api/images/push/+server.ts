@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { inspectImage, tagImage, pushImage, parseRegistryUrl } from '$lib/server/docker';
+import { encodeRegistryAuth } from '$lib/server/registry-auth';
 import { getRegistry, getEnvironment } from '$lib/server/db';
 import { authorize } from '$lib/server/authorize';
 import { auditImage } from '$lib/server/audit';
@@ -110,8 +111,9 @@ export const POST: RequestHandler = async (event) => {
 		const authServerAddress = isDockerHub ? 'https://index.docker.io/v1/' : registryHost;
 		const authConfig = registry.username && registry.password
 			? {
-				username: registry.username,
-				password: registry.password,
+				// Trim to neutralize stray whitespace in legacy stored credentials (#1105)
+				username: registry.username.trim(),
+				password: registry.password.trim(),
 				serveraddress: authServerAddress
 			}
 			: {
@@ -148,7 +150,18 @@ export const POST: RequestHandler = async (event) => {
 					return;
 				}
 
-				const authHeader = Buffer.from(JSON.stringify(authConfig)).toString('base64');
+				const authHeader = encodeRegistryAuth(authConfig);
+				{
+					const u = (authConfig as { username?: string }).username ?? '';
+					const p = (authConfig as { password?: string }).password ?? '';
+					const userLast = u.length ? u.charCodeAt(u.length - 1).toString(16) : 'na';
+					const pwLast = p.length ? p.charCodeAt(p.length - 1).toString(16) : 'na';
+					console.log(
+						`[Push/Edge] auth: registry=${registryHost} user(len=${u.length},last=0x${userLast}) ` +
+						`pw(len=${p.length},last=0x${pwLast}) serveraddress=${authConfig.serveraddress} ` +
+						`authHeader(len=${authHeader.length},prefix=${authHeader.slice(0, 16)})`
+					);
+				}
 
 				await new Promise<void>((resolve, reject) => {
 					sendEdgeStreamRequest(

@@ -90,6 +90,8 @@ export interface GeneralSettings {
 	defaultComposeTemplate: string;
 	// Label filter mode
 	labelFilterMode: 'any' | 'all';
+	// Whether spinning icons (animate-spin etc.) are animated (#1169)
+	animateIcons: boolean;
 }
 
 const DEFAULT_SETTINGS: Omit<GeneralSettings, 'scheduleRetentionDays' | 'eventRetentionDays' | 'scheduleCleanupCron' | 'eventCleanupCron' | 'scheduleCleanupEnabled' | 'eventCleanupEnabled' | 'scannerCleanupCron' | 'scannerCleanupEnabled'> = {
@@ -122,6 +124,7 @@ const DEFAULT_SETTINGS: Omit<GeneralSettings, 'scheduleRetentionDays' | 'eventRe
 	defaultGrypeImage: DEFAULT_GRYPE_IMAGE,
 	defaultTrivyImage: DEFAULT_TRIVY_IMAGE,
 	labelFilterMode: 'any' as const,
+	animateIcons: true,
 	defaultComposeTemplate: `version: "3.8"
 
 services:
@@ -199,7 +202,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			defaultGrypeImage,
 			defaultTrivyImage,
 			defaultComposeTemplate,
-			labelFilterMode
+			labelFilterMode,
+			animateIcons
 		] = await Promise.all([
 			getSetting('confirm_destructive'),
 			getSetting('show_stopped_containers'),
@@ -238,7 +242,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			getSetting('default_grype_image'),
 			getSetting('default_trivy_image'),
 			getSetting('default_compose_template'),
-			getSetting('label_filter_mode')
+			getSetting('label_filter_mode'),
+			getSetting('animate_icons')
 		]);
 
 		const settings: GeneralSettings = {
@@ -281,7 +286,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			defaultGrypeImage: defaultGrypeImage ?? DEFAULT_GRYPE_IMAGE,
 			defaultTrivyImage: defaultTrivyImage ?? DEFAULT_TRIVY_IMAGE,
 			defaultComposeTemplate: defaultComposeTemplate ?? DEFAULT_SETTINGS.defaultComposeTemplate,
-			labelFilterMode: labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode
+			labelFilterMode: labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode,
+			animateIcons: animateIcons ?? DEFAULT_SETTINGS.animateIcons
 		};
 
 		return json(settings);
@@ -299,7 +305,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const body = await request.json();
-		const { confirmDestructive, showStoppedContainers, highlightUpdates, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode } = body;
+		const { confirmDestructive, showStoppedContainers, highlightUpdates, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, animateIcons } = body;
 
 		if (confirmDestructive !== undefined) {
 			await setSetting('confirm_destructive', confirmDestructive);
@@ -439,6 +445,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (labelFilterMode !== undefined && (labelFilterMode === 'any' || labelFilterMode === 'all')) {
 			await setSetting('label_filter_mode', labelFilterMode);
 		}
+		if (animateIcons !== undefined && typeof animateIcons === 'boolean') {
+			await setSetting('animate_icons', animateIcons);
+		}
 
 		// Fetch all settings in parallel for the response
 		const [
@@ -479,7 +488,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			defaultGrypeImageVal,
 			defaultTrivyImageVal,
 			defaultComposeTemplateVal,
-			labelFilterModeVal
+			labelFilterModeVal,
+			animateIconsVal
 		] = await Promise.all([
 			getSetting('confirm_destructive'),
 			getSetting('show_stopped_containers'),
@@ -518,7 +528,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			getSetting('default_grype_image'),
 			getSetting('default_trivy_image'),
 			getSetting('default_compose_template'),
-			getSetting('label_filter_mode')
+			getSetting('label_filter_mode'),
+			getSetting('animate_icons')
 		]);
 
 		const settings: GeneralSettings = {
@@ -561,7 +572,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			defaultGrypeImage: defaultGrypeImageVal ?? DEFAULT_GRYPE_IMAGE,
 			defaultTrivyImage: defaultTrivyImageVal ?? DEFAULT_TRIVY_IMAGE,
 			defaultComposeTemplate: defaultComposeTemplateVal ?? DEFAULT_SETTINGS.defaultComposeTemplate,
-			labelFilterMode: labelFilterModeVal ?? DEFAULT_SETTINGS.labelFilterMode
+			labelFilterMode: labelFilterModeVal ?? DEFAULT_SETTINGS.labelFilterMode,
+			animateIcons: animateIconsVal ?? DEFAULT_SETTINGS.animateIcons
 		};
 
 		return json(settings);

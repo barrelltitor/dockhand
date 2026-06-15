@@ -158,8 +158,9 @@ export const POST: RequestHandler = async ({ params, url, cookies, request }) =>
 			defined = envVars.map(v => v.key).sort();
 		}
 
-		// Calculate missing and unused
-		const missing = required.filter(v => !defined.includes(v));
+		// Calculate missing and unused. Built-in Docker/Compose vars are provided implicitly
+		// by the runtime, so they're never "missing" even if not in the user's env panel.
+		const missing = required.filter(v => !defined.includes(v) && !DOCKER_COMPOSE_BUILTIN_VARS.has(v));
 		const unused = defined.filter(v => !required.includes(v) && !optional.includes(v) && !DOCKER_COMPOSE_BUILTIN_VARS.has(v));
 
 		const result: ValidationResult = {

@@ -24,8 +24,10 @@
 		Unplug,
 		CircleArrowUp,
 		CircleFadingArrowUp,
-		Clock
+		Clock,
+		AlertTriangle
 	} from 'lucide-svelte';
+	import * as Dialog from '$lib/components/ui/dialog';
 	import { broom, whale } from '@lucide/lab';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import { canAccess } from '$lib/stores/auth';
@@ -100,7 +102,13 @@
 	let testingEnvs = $state<Set<number>>(new Set());
 	let pruneStatus = $state<{ [id: number]: 'pruning' | 'success' | 'error' | null }>({});
 	let confirmPruneEnvId = $state<number | null>(null);
-	let confirmDeleteEnvId = $state<number | null>(null);
+	// Delete confirmation dialog state — shows the on-disk paths that will be
+	// wiped + the stacks-tracked counts so the user knows what they're losing.
+	let showDeleteConfirm = $state(false);
+	let deleteEnvTarget = $state<Environment | null>(null);
+	let deleteStackCount = $state(0);
+	let deleteGitStackCount = $state(0);
+	let deleteCountsUnknown = $state(false);
 
 	// Track which environments have scanner enabled (for shield indicator)
 	let envScannerStatus = $state<{ [id: number]: boolean }>({});
@@ -189,6 +197,47 @@
 			}
 		} catch (error) {
 			toast.error('Failed to delete environment');
+		}
+	}
+
+	// Two-step delete: fetch the stack counts first (fail-closed) and pop the
+	// dialog that lists the on-disk paths being wiped. Only on explicit
+	// confirmation do we actually call deleteEnvironment().
+	async function requestDeleteEnvironment(id: number) {
+		const env = environments.find(e => e.id === id);
+		if (!env) return;
+
+		const [stacksRes, gitRes] = await Promise.all([
+			fetch(`/api/stacks?env=${id}`).catch(() => null),
+			fetch(`/api/git/stacks?env=${id}`).catch(() => null)
+		]);
+
+		let unknown = false;
+		let stacks: unknown[] = [];
+		let gitStacks: unknown[] = [];
+		if (stacksRes?.ok) {
+			try { stacks = await stacksRes.json(); } catch { unknown = true; }
+		} else {
+			unknown = true;
+		}
+		if (gitRes?.ok) {
+			try { gitStacks = await gitRes.json(); } catch { unknown = true; }
+		} else {
+			unknown = true;
+		}
+		deleteStackCount = Array.isArray(stacks) ? stacks.length : 0;
+		deleteGitStackCount = Array.isArray(gitStacks) ? gitStacks.length : 0;
+		deleteCountsUnknown = unknown;
+		deleteEnvTarget = env;
+		showDeleteConfirm = true;
+	}
+
+	async function confirmAndDelete() {
+		const target = deleteEnvTarget;
+		showDeleteConfirm = false;
+		deleteEnvTarget = null;
+		if (target) {
+			await deleteEnvironment(target.id);
 		}
 	}
 
@@ -605,27 +654,15 @@
 										</ConfirmPopover>
 									{/if}
 									{#if $canAccess('environments', 'delete')}
-										<ConfirmPopover
-											open={confirmDeleteEnvId === env.id}
-											action="Delete"
-											itemType="environment"
-											itemName={env.name}
-											title="Remove"
-											position="left"
-											onConfirm={() => deleteEnvironment(env.id)}
-											onOpenChange={(open) => confirmDeleteEnvId = open ? env.id : null}
+										<Button
+											variant="ghost"
+											size="sm"
+											class="h-7 px-2 text-muted-foreground hover:text-destructive"
+											title="Delete environment"
+											onclick={() => requestDeleteEnvironment(env.id)}
 										>
-											{#snippet children({ open })}
-												<Button
-													variant="ghost"
-													size="sm"
-													class="h-7 px-2 {open ? 'text-destructive' : 'text-muted-foreground hover:text-destructive'}"
-													title="Delete environment"
-												>
-													<Trash2 class="w-3.5 h-3.5" />
-												</Button>
-											{/snippet}
-										</ConfirmPopover>
+											<Trash2 class="w-3.5 h-3.5" />
+										</Button>
 									{/if}
 								</div>
 							</Table.Cell>
@@ -646,3 +683,72 @@
 	onSaved={handleSaved}
 	onScannerStatusChange={handleScannerStatusChange}
 />
+
+<!-- Delete environment confirmation. Lists the on-disk paths that will be
+     wiped + the count of stacks tracked under this env. Fail-closed:
+     if the stack-count fetch fails, the dialog still shows but the body
+     warns that the count couldn't be enumerated. -->
+<Dialog.Root bind:open={showDeleteConfirm}>
+	<Dialog.Content class="max-w-2xl">
+		<Dialog.Header>
+			<Dialog.Title class="flex items-center gap-2">
+				<AlertTriangle class="w-5 h-5 text-destructive" />
+				Delete environment?
+			</Dialog.Title>
+			<Dialog.Description class="pt-2 space-y-3 text-sm">
+				{#if deleteEnvTarget}
+					<p>
+						The environment
+						<code class="text-xs bg-muted px-1 py-0.5 rounded">{deleteEnvTarget.name}</code>
+						and the following directories will be permanently removed from the Dockhand host:
+					</p>
+					<div class="space-y-1 text-xs font-mono bg-muted/40 rounded-md p-3 border overflow-x-auto">
+						<div class="flex items-center gap-2 whitespace-nowrap">
+							<Trash2 class="w-3.5 h-3.5 shrink-0 text-destructive" />
+							<code class="whitespace-nowrap">$DATA_DIR/stacks/{deleteEnvTarget.name}/</code>
+						</div>
+						<div class="flex items-center gap-2 whitespace-nowrap">
+							<Trash2 class="w-3.5 h-3.5 shrink-0 text-destructive" />
+							<code class="whitespace-nowrap">$DATA_DIR/git-repos/{deleteEnvTarget.name}/</code>
+						</div>
+					</div>
+					{#if deleteCountsUnknown}
+						<p>
+							Couldn't list the stacks on this environment — proceed only
+							if you're sure what's deployed here.
+						</p>
+					{:else if deleteStackCount === 0 && deleteGitStackCount === 0}
+						<p>No stacks are currently tracked on this environment.</p>
+					{:else}
+						<p>
+							{#if deleteStackCount > 0 && deleteGitStackCount > 0}
+								<strong>{deleteStackCount} stack{deleteStackCount === 1 ? '' : 's'}</strong>
+								and <strong>{deleteGitStackCount} git stack{deleteGitStackCount === 1 ? '' : 's'}</strong>
+								tracked here will be removed from Dockhand's database.
+							{:else if deleteStackCount > 0}
+								<strong>{deleteStackCount} stack{deleteStackCount === 1 ? '' : 's'}</strong>
+								tracked here will be removed from Dockhand's database.
+							{:else}
+								<strong>{deleteGitStackCount} git stack{deleteGitStackCount === 1 ? '' : 's'}</strong>
+								tracked here will be removed from Dockhand's database.
+							{/if}
+						</p>
+					{/if}
+					<p class="text-muted-foreground">
+						Running containers on the Docker/Hawser host are <strong>not</strong> stopped.
+						You can stop or remove them separately.
+					</p>
+				{/if}
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="flex justify-end gap-2 mt-4">
+			<Button variant="outline" onclick={() => (showDeleteConfirm = false)}>
+				Cancel
+			</Button>
+			<Button variant="destructive" onclick={confirmAndDelete}>
+				<Trash2 class="w-4 h-4 mr-2" />
+				Delete environment
+			</Button>
+		</div>
+	</Dialog.Content>
+</Dialog.Root>

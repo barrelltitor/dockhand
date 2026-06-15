@@ -324,6 +324,7 @@ export const gitStacks = sqliteTable('git_stacks', {
 	lastCommit: text('last_commit'),
 	syncStatus: text('sync_status').default('pending'),
 	syncError: text('sync_error'),
+	syncedFiles: text('synced_files'), // JSON manifest { relativePath: sha256hex } of files written on last sync
 	createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 	updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
 }, (table) => ({

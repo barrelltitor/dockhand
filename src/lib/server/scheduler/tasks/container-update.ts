@@ -38,7 +38,7 @@ import {
 import { getScannerSettings, scanImage, type ScanResult, type VulnerabilitySeverity } from '../../scanner';
 import { sendEventNotification } from '../../notifications';
 import { parseImageNameAndTag, shouldBlockUpdate, combineScanSummaries, isSystemContainer } from './update-utils';
-import { isUpdateDisabledByLabel } from '../../container-labels';
+import { isUpdateDisabledByLabel, isHiddenByLabel } from '../../container-labels';
 
 // =============================================================================
 // TYPES
@@ -378,6 +378,18 @@ export async function runContainerUpdate(
 				completedAt: new Date().toISOString(),
 				duration: Date.now() - startTime,
 				details: { reason: 'Skipped by dockhand.update=false label' }
+			});
+			return;
+		}
+
+		// Hidden containers are excluded from update polling and auto-updates (#1083)
+		if (isHiddenByLabel(inspectData.Config?.Labels)) {
+			log(`Skipping - dockhand.hidden=true label set on container`);
+			await updateScheduleExecution(execution.id, {
+				status: 'skipped',
+				completedAt: new Date().toISOString(),
+				duration: Date.now() - startTime,
+				details: { reason: 'Skipped by dockhand.hidden=true label' }
 			});
 			return;
 		}

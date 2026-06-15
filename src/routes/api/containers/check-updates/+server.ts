@@ -4,7 +4,7 @@ import { authorize } from '$lib/server/authorize';
 import { listContainers, inspectContainer, checkImageUpdateAvailable } from '$lib/server/docker';
 import { clearPendingContainerUpdates, addPendingContainerUpdate } from '$lib/server/db';
 import { isSystemContainer } from '$lib/server/scheduler/tasks/update-utils';
-import { isUpdateDisabledByLabel } from '$lib/server/container-labels';
+import { isUpdateDisabledByLabel, isHiddenByLabel } from '$lib/server/container-labels';
 import { createJobResponse } from '$lib/server/sse';
 
 export interface UpdateCheckResult {
@@ -42,7 +42,9 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 		}
 
 		const allContainers = await listContainers(true, envIdNum);
-		const containers = allContainers;
+		// Containers labeled dockhand.hidden=true are excluded from update checks —
+		// they're invisible to the user, so we won't alert on updates for them either (#1083).
+		const containers = allContainers.filter(c => !isHiddenByLabel(c.labels));
 
 		send('progress', { checked: 0, total: containers.length });
 
@@ -65,8 +67,19 @@ export const POST: RequestHandler = async ({ url, cookies, request }) => {
 					};
 				}
 
-				const result = await checkImageUpdateAvailable(imageName, currentImageId, envIdNum);
 				const updateDisabled = isUpdateDisabledByLabel(inspectData.Config?.Labels);
+				if (updateDisabled) {
+					return {
+						containerId: container.id,
+						containerName: container.name,
+						imageName,
+						hasUpdate: false,
+						systemContainer: isSystemContainer(imageName) || null,
+						updateDisabled: true
+					};
+				}
+
+				const result = await checkImageUpdateAvailable(imageName, currentImageId, envIdNum);
 
 				return {
 					containerId: container.id,

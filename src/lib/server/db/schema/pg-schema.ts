@@ -327,6 +327,7 @@ export const gitStacks = pgTable('git_stacks', {
 	lastCommit: text('last_commit'),
 	syncStatus: text('sync_status').default('pending'),
 	syncError: text('sync_error'),
+	syncedFiles: text('synced_files'), // JSON manifest { relativePath: sha256hex } of files written on last sync
 	createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
 	updatedAt: timestamp('updated_at', { mode: 'string' }).defaultNow()
 }, (table) => ({

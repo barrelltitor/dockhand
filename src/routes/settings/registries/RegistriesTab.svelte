@@ -5,7 +5,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Plus, Trash2, Pencil, Star, Key, Download, Icon } from 'lucide-svelte';
+	import { Plus, Trash2, Pencil, Star, Key, Download, Icon, Wifi, RefreshCw, CircleCheck, CircleX } from 'lucide-svelte';
 	import { whale } from '@lucide/lab';
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import { canAccess } from '$lib/stores/auth';
@@ -38,6 +38,8 @@
 	let showRegModal = $state(false);
 	let editingReg = $state<Registry | null>(null);
 	let confirmDeleteRegistryId = $state<number | null>(null);
+	let testingRegistryId = $state<number | null>(null);
+	let testResults = $state<Record<number, { success: boolean; message: string }>>({});
 
 	async function fetchRegistries() {
 		regLoading = true;
@@ -72,6 +74,30 @@
 			}
 		} catch (error) {
 			toast.error('Failed to delete registry');
+		}
+	}
+
+	async function testRegistry(id: number) {
+		testingRegistryId = id;
+		delete testResults[id];
+		try {
+			const response = await fetch('/api/registries/test', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ registryId: id })
+			});
+			const result = await response.json();
+			testResults[id] = result;
+			if (result.success) {
+				toast.success(result.message);
+			} else {
+				toast.error(result.message);
+			}
+		} catch {
+			testResults[id] = { success: false, message: 'Connection failed' };
+			toast.error('Connection test failed');
+		} finally {
+			testingRegistryId = null;
 		}
 	}
 
@@ -171,6 +197,23 @@
 									Set default
 								</Button>
 							{/if}
+							<Button
+								variant="outline"
+								size="sm"
+								onclick={() => testRegistry(registry.id)}
+								disabled={testingRegistryId === registry.id}
+								title="Test connectivity"
+							>
+								{#if testingRegistryId === registry.id}
+									<RefreshCw class="w-3 h-3 animate-spin" />
+								{:else if testResults[registry.id]?.success}
+									<CircleCheck class="w-3 h-3 text-green-500" />
+								{:else if testResults[registry.id] && !testResults[registry.id].success}
+									<CircleX class="w-3 h-3 text-red-500" />
+								{:else}
+									<Wifi class="w-3 h-3" />
+								{/if}
+							</Button>
 							{#if $canAccess('registries', 'edit')}
 								<Button
 									variant="outline"

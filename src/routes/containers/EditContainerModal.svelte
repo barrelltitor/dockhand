@@ -1110,6 +1110,8 @@
 
 				<ContainerSettingsTab
 					mode="edit"
+					{containerId}
+					envId={$currentEnvironment?.id ?? undefined}
 					bind:name
 					bind:image
 					bind:command

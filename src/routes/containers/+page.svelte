@@ -1929,7 +1929,7 @@
 											class="inline-flex items-center gap-0.5 text-xs {portUrl ? 'bg-primary/10 hover:bg-primary/20 text-primary' : 'bg-muted hover:bg-blue-500/20 hover:text-blue-500'} px-1 py-0.5 rounded transition-colors shrink-0"
 											title="Open {url} in new tab"
 										>
-											<code>{port.display}</code>
+											<code>{portParsed?.name ?? port.display}</code>
 											<ExternalLink class="w-2.5 h-2.5 {portUrl ? 'opacity-60' : 'text-muted-foreground'}" />
 										</a>
 									{:else}

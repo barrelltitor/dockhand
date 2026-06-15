@@ -65,6 +65,10 @@ export interface VolumeInfo {
 	createdAt?: string;
 	created: string; // Alias for createdAt, populated by API
 	usedBy?: VolumeUsage[]; // Containers using this volume
+	// driver_opts from the underlying volume — present for non-trivially
+	// configured volumes (NFS, CIFS, BTRFS subvolumes, etc.). The 'type'
+	// key here is what the volumes list surfaces as the Type column.
+	options?: Record<string, string>;
 }
 
 export interface NetworkInfo {

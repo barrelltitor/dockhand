@@ -2076,7 +2076,7 @@
 														class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded {portUrl ? 'bg-primary/10 text-primary hover:bg-primary/20' : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800'} transition-colors"
 														title="Open {url} in new tab"
 													>
-														<code>{port.display}</code>
+														<code>{portParsed?.name ?? port.display}</code>
 														<ExternalLink class="w-2.5 h-2.5 {portUrl ? 'opacity-60' : ''}" />
 													</a>
 												{:else}

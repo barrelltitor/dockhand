@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { EditorState, StateField, StateEffect, RangeSet } from '@codemirror/state';
+	import { EditorState, StateField, StateEffect, RangeSet, Prec } from '@codemirror/state';
 	import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, WidgetType, type DecorationSet } from '@codemirror/view';
 	// Note: Secret masking was removed - secrets are now excluded from the raw editor entirely
 	// and are only stored in the database (never written to .env file)
-	import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-	import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, StreamLanguage, type StreamParser } from '@codemirror/language';
+	import { defaultKeymap, history, historyKeymap, indentWithTab, insertNewlineAndIndent } from '@codemirror/commands';
+	import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, indentUnit, StreamLanguage, type StreamParser } from '@codemirror/language';
 	import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 	import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 	import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
+	import { shell } from '@codemirror/legacy-modes/mode/shell';
+	import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
+	import { toml } from '@codemirror/legacy-modes/mode/toml';
+	import { properties } from '@codemirror/legacy-modes/mode/properties';
 
 	// Simple dotenv/env file language parser
 	const dotenvParser: StreamParser<{ inValue: boolean }> = {
@@ -496,6 +500,21 @@
 		initialSpacer: () => new VariableGutterMarker('required')
 	});
 
+	// YAML Enter handler: after a key-only line ending with ":", indent one level
+	// deeper than what the default indent service returns (it can't predict child
+	// indent when no child content exists yet).
+	function yamlNewlineAndIndent(view: EditorView): boolean {
+		const { state } = view;
+		const line = state.doc.lineAt(state.selection.main.head);
+		const withoutComment = line.text.trimEnd().replace(/#.*$/, '').trimEnd();
+		if (!withoutComment.endsWith(':')) return false;
+		insertNewlineAndIndent(view);
+		const unit = state.facet(indentUnit);
+		const cursor = view.state.selection.main.head;
+		view.dispatch({ changes: { from: cursor, insert: unit }, selection: { anchor: cursor + unit.length } });
+		return true;
+	}
+
 	// Get language extension based on language name
 	function getLanguageExtension(lang: string) {
 		switch (lang) {
@@ -527,12 +546,18 @@
 				return xml();
 			case 'sql':
 				return sql();
-			case 'dockerfile':
 			case 'shell':
 			case 'bash':
 			case 'sh':
-				// No dedicated shell/dockerfile support, use basic highlighting
-				return [];
+				return StreamLanguage.define(shell);
+			case 'dockerfile':
+				return StreamLanguage.define(dockerFile);
+			case 'toml':
+				return StreamLanguage.define(toml);
+			case 'ini':
+			case 'conf':
+			case 'properties':
+				return StreamLanguage.define(properties);
 			case 'dotenv':
 			case 'env':
 				return StreamLanguage.define(dotenvParser);
@@ -671,7 +696,9 @@
 			]),
 			...themeExtensions,
 			EditorView.lineWrapping,
-			getLanguageExtension(language)
+			EditorState.tabSize.of(2),
+			getLanguageExtension(language),
+			...(language === 'yaml' ? [Prec.high(keymap.of([{ key: 'Enter', run: yamlNewlineAndIndent }]))] : [])
 		].flat();
 
 		if (readonly) {

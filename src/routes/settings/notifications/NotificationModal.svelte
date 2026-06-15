@@ -159,7 +159,7 @@
 			}
 		} else {
 			if (!config.urls?.length) {
-				return 'At least one Apprise URL is required';
+				return 'At least one webhook URL is required';
 			}
 		}
 		return null;
@@ -234,7 +234,7 @@
 			}
 		} else {
 			if (!config.urls?.length) {
-				formError = 'At least one Apprise URL is required';
+				formError = 'At least one webhook URL is required';
 				return;
 			}
 		}
@@ -311,7 +311,7 @@
 					<Label>Type</Label>
 					{#if isEditing}
 						<Badge variant="secondary" class="h-9 flex items-center justify-center">
-							{formType === 'smtp' ? 'SMTP (Email)' : 'Apprise (Webhooks)'}
+							{formType === 'smtp' ? 'SMTP (Email)' : 'Webhooks'}
 						</Badge>
 					{:else}
 						<Select.Root
@@ -324,7 +324,7 @@
 									{#if formType === 'smtp'}
 										<Mail class="w-4 h-4" />SMTP (Email)
 									{:else}
-										<Zap class="w-4 h-4" />Apprise (Webhooks)
+										<Zap class="w-4 h-4" />Webhooks
 									{/if}
 								</span>
 							</Select.Trigger>
@@ -333,7 +333,7 @@
 									<span class="flex items-center gap-2"><Mail class="w-4 h-4" />SMTP (Email)</span>
 								</Select.Item>
 								<Select.Item value="apprise">
-									<span class="flex items-center gap-2"><Zap class="w-4 h-4" />Apprise (Webhooks)</span>
+									<span class="flex items-center gap-2"><Zap class="w-4 h-4" />Webhooks</span>
 								</Select.Item>
 							</Select.Content>
 						</Select.Root>
@@ -409,9 +409,9 @@
 				</div>
 			{:else}
 				<div class="space-y-4 border-t pt-4 min-h-[380px]">
-					<p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Apprise configuration</p>
+					<p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Webhook configuration</p>
 					<div class="space-y-2">
-						<Label for="notif-apprise-urls">Apprise URLs * (one per line)</Label>
+						<Label for="notif-apprise-urls">Webhook URLs * (one per line)</Label>
 						<textarea
 							id="notif-apprise-urls"
 							bind:value={formAppriseUrls}
@@ -430,11 +430,13 @@ workflows://hostname/workflow/signature
 bark://bark_key
 bark://host/bark_key
 barks://host/bark_key
+signal://host:8080/+sender/+recipient
+apprise://host:8000/your-key
 jsons://hostname/webhook/path"
 						class="flex min-h-[220px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 					></textarea>
 					<p class="text-xs text-muted-foreground">
-						Supports Gotify (gotify:// or gotifys:// for HTTPS), Discord, Slack, Mattermost (mmost:// or mmosts://), Telegram, ntfy, Bark, Pushover, Workflows (for e.g. Microsoft Teams), and generic JSON webhooks.
+						Supports Discord, Slack, Mattermost, Telegram, ntfy, Gotify, Pushover, Bark, Signal (via signal-cli-rest-api), Microsoft Teams (via Workflows), and generic JSON. Or use <code>apprise://</code> to forward to a self-hosted <a href="https://github.com/caronc/apprise-api" target="_blank" rel="noopener">caronc/apprise-api</a> server for any provider Apprise upstream supports.
 						</p>
 					</div>
 				</div>

@@ -13,6 +13,7 @@
 	import LicenseModal from './LicenseModal.svelte';
 	import PrivacyModal from './PrivacyModal.svelte';
 	import SelfUpdateDialog from './SelfUpdateDialog.svelte';
+	import ChangelogText from '$lib/components/ChangelogText.svelte';
 
 	interface Dependency {
 		name: string;
@@ -885,7 +886,7 @@
 															Fix
 														</span>
 													{/if}
-													<span>{change.text}</span>
+													<ChangelogText text={change.text} />
 												</li>
 											{/each}
 										</ul>

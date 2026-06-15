@@ -76,6 +76,7 @@ export const volumeColumns: ColumnConfig[] = [
 	{ id: 'select', label: '', fixed: 'start', width: 32, resizable: false },
 	{ id: 'name', label: 'Name', sortable: true, sortField: 'name', width: 400, minWidth: 150, grow: true },
 	{ id: 'driver', label: 'Driver', sortable: true, sortField: 'driver', width: 80, minWidth: 60 },
+	{ id: 'type', label: 'Type', sortable: true, sortField: 'type', width: 80, minWidth: 60 },
 	{ id: 'scope', label: 'Scope', width: 70, minWidth: 50 },
 	{ id: 'stack', label: 'Stack', sortable: true, sortField: 'stack', width: 120, minWidth: 80 },
 	{ id: 'usedBy', label: 'Used by', width: 150, minWidth: 80 },

@@ -4,6 +4,7 @@ import { getRegistry, updateRegistry, deleteRegistry, setDefaultRegistry } from 
 import { authorize } from '$lib/server/authorize';
 import { auditRegistry } from '$lib/server/audit';
 import { computeAuditDiff } from '$lib/utils/diff';
+import { parseRegistryUrl, DOCKER_HUB_HOSTS } from '$lib/server/docker';
 
 export const GET: RequestHandler = async ({ params, cookies }) => {
 	const auth = await authorize(cookies);
@@ -51,11 +52,22 @@ export const PUT: RequestHandler = async (event) => {
 		}
 
 		const data = await request.json();
+		// Trim username/password to prevent stray whitespace from copy-paste corrupting
+		// the X-Registry-Auth / Authorization headers (#1105).
+		const trimmedUsername = typeof data.username === 'string' ? data.username.trim() : data.username;
+		const trimmedPassword = typeof data.password === 'string' ? data.password.trim() : data.password;
+
+		// Diagnostic logging (#1105) — never logs the plaintext credential
+		const userLen = typeof trimmedUsername === 'string' ? trimmedUsername.length : 0;
+		const pwLen = typeof trimmedPassword === 'string' ? trimmedPassword.length : 0;
+		const { host: normalizedHost } = parseRegistryUrl(data.url);
+		const hubTag = DOCKER_HUB_HOSTS.has(normalizedHost) ? ' (docker-hub)' : '';
+		console.log(`[Registry] update id=${id}: url=${data.url} normalized=${normalizedHost}${hubTag} user(len=${userLen}) pw(len=${pwLen})`);
 		const registry = await updateRegistry(id, {
 			name: data.name,
 			url: data.url,
-			username: data.username,
-			password: data.password,
+			username: trimmedUsername,
+			password: trimmedPassword,
 			isDefault: data.isDefault
 		});
 

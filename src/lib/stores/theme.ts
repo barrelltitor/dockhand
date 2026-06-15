@@ -20,6 +20,7 @@ export interface ThemePreferences {
 	gridFontSize: FontSize;
 	terminalFont: string;
 	editorFont: string;
+	animateIcons: boolean;
 }
 
 const STORAGE_KEY = 'dockhand-theme';
@@ -31,7 +32,8 @@ const defaultPrefs: ThemePreferences = {
 	fontSize: 'normal',
 	gridFontSize: 'normal',
 	terminalFont: 'system-mono',
-	editorFont: 'system-mono'
+	editorFont: 'system-mono',
+	animateIcons: true
 };
 
 // Font size scale mapping
@@ -100,7 +102,12 @@ function createThemeStore() {
 						fontSize: data.fontSize || data.font_size || 'normal',
 						gridFontSize: data.gridFontSize || data.grid_font_size || 'normal',
 						terminalFont: data.terminalFont || data.terminal_font || 'system-mono',
-						editorFont: data.editorFont || data.editor_font || 'system-mono'
+						editorFont: data.editorFont || data.editor_font || 'system-mono',
+						// Default ON (#1169)
+						animateIcons:
+							data.animateIcons === undefined && data.animate_icons === undefined
+								? true
+								: !!(data.animateIcons ?? data.animate_icons)
 					};
 					set(prefs);
 					saveToStorage(prefs);
@@ -198,6 +205,9 @@ export function applyTheme(prefs: ThemePreferences) {
 
 	// Apply editor font
 	applyEditorFont(prefs.editorFont);
+
+	// Apply icon animation toggle (#1169) — single class on <html> drives a CSS rule in app.css
+	document.documentElement.classList.toggle('no-icon-animation', !prefs.animateIcons);
 }
 
 // Apply font to document

@@ -1,0 +1,1 @@
+ALTER TABLE `git_stacks` ADD `synced_files` text;

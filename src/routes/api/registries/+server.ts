@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { getRegistries, createRegistry, setDefaultRegistry } from '$lib/server/db';
 import { authorize } from '$lib/server/authorize';
 import { auditRegistry } from '$lib/server/audit';
+import { parseRegistryUrl, DOCKER_HUB_HOSTS } from '$lib/server/docker';
 
 export const GET: RequestHandler = async ({ cookies }) => {
 	const auth = await authorize(cookies);
@@ -38,11 +39,21 @@ export const POST: RequestHandler = async (event) => {
 			return json({ error: 'Name and URL are required' }, { status: 400 });
 		}
 
+		// Trim username/password to prevent stray whitespace from copy-paste corrupting
+		// the X-Registry-Auth / Authorization headers (#1105).
+		const trimmedUsername = typeof data.username === 'string' ? data.username.trim() : undefined;
+		const trimmedPassword = typeof data.password === 'string' ? data.password.trim() : undefined;
+
+		// Diagnostic logging (#1105) — never logs the plaintext credential
+		const { host: normalizedHost } = parseRegistryUrl(data.url);
+		const hubTag = DOCKER_HUB_HOSTS.has(normalizedHost) ? ' (docker-hub)' : '';
+		console.log(`[Registry] create: url=${data.url} normalized=${normalizedHost}${hubTag} user(len=${trimmedUsername?.length ?? 0}) pw(len=${trimmedPassword?.length ?? 0})`);
+
 		const registry = await createRegistry({
 			name: data.name,
 			url: data.url,
-			username: data.username || undefined,
-			password: data.password || undefined,
+			username: trimmedUsername || undefined,
+			password: trimmedPassword || undefined,
 			isDefault: data.isDefault || false
 		});
 

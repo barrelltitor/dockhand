@@ -63,7 +63,7 @@ export const POST: RequestHandler = async (event) => {
 		} else if (type === 'apprise') {
 			const appriseConfig = config as AppriseConfig;
 			if (!appriseConfig.urls?.length) {
-				return json({ error: 'Apprise config requires at least one URL' }, { status: 400 });
+				return json({ error: 'Webhook config requires at least one URL' }, { status: 400 });
 			}
 		}
 

@@ -4,6 +4,7 @@
 
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
@@ -28,7 +29,7 @@
 	import { EmptyState, NoEnvironment } from '$lib/components/ui/empty-state';
 	import { DataGrid } from '$lib/components/data-grid';
 
-	type SortField = 'name' | 'driver' | 'stack' | 'created';
+	type SortField = 'name' | 'driver' | 'type' | 'stack' | 'created';
 	type SortDirection = 'asc' | 'desc';
 
 	let volumes = $state<VolumeInfo[]>([]);
@@ -202,7 +203,10 @@
 			const query = searchQuery.toLowerCase();
 			result = result.filter(vol =>
 				vol.name.toLowerCase().includes(query) ||
-				(vol.labels['com.docker.compose.project'] || '').toLowerCase().includes(query)
+				(vol.labels['com.docker.compose.project'] || '').toLowerCase().includes(query) ||
+				// Match the driver_opts type (e.g. "nfs", "cifs") so users can
+				// quickly find network-mounted volumes by typing the protocol.
+				(vol.options?.type || '').toLowerCase().includes(query)
 			);
 		}
 
@@ -215,6 +219,10 @@
 					break;
 				case 'driver':
 					cmp = a.driver.localeCompare(b.driver);
+					break;
+				case 'type':
+					// Volumes without driver_opts.type sort below those with one.
+					cmp = (a.options?.type || '').localeCompare(b.options?.type || '');
 					break;
 				case 'stack':
 					const stackA = a.labels['com.docker.compose.project'] || '';
@@ -539,11 +547,24 @@
 					<code class="text-xs truncate block" title={volume.name}>{volume.name}</code>
 				{:else if column.id === 'driver'}
 					<Badge variant="outline" class="text-xs py-0 px-1.5 shadow-sm rounded-sm">{volume.driver}</Badge>
+				{:else if column.id === 'type'}
+					{#if volume.options?.type}
+						<Badge variant="outline" class="text-xs py-0 px-1.5 shadow-sm rounded-sm" title={Object.entries(volume.options).map(([k, v]) => `${k}=${v}`).join('\n')}>{volume.options.type}</Badge>
+					{:else}
+						<span class="text-muted-foreground text-xs">-</span>
+					{/if}
 				{:else if column.id === 'scope'}
 					<span class="text-xs">{volume.scope}</span>
 				{:else if column.id === 'stack'}
 					{#if stack}
-						<Badge variant="secondary" class="text-xs py-0 px-1.5 shadow-sm rounded-sm">{stack}</Badge>
+						<button
+							type="button"
+							onclick={(e) => { e.stopPropagation(); goto(appendEnvParam(`/stacks?search=${encodeURIComponent(stack)}`, envId)); }}
+							class="cursor-pointer"
+							title={`Open stack "${stack}"`}
+						>
+							<Badge variant="secondary" class="text-xs py-0 px-1.5 shadow-sm rounded-sm hover:bg-primary/10 hover:border-primary/50 transition-colors">{stack}</Badge>
+						</button>
 					{:else}
 						<span class="text-muted-foreground text-xs">-</span>
 					{/if}

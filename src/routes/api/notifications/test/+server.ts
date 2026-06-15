@@ -29,7 +29,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (data.type === 'apprise') {
 			const config = data.config;
 			if (!config.urls?.length) {
-				return json({ error: 'At least one Apprise URL is required' }, { status: 400 });
+				return json({ error: 'At least one webhook URL is required' }, { status: 400 });
 			}
 		}
 

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { readJobResponse } from '$lib/utils/sse-fetch';
+	import { validateEnvName } from '$lib/utils/env-name';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -60,7 +61,9 @@
 		ChevronDown,
 		ChevronRight,
 		XCircle,
-		ImageUp
+		ImageUp,
+		Upload,
+		ArrowRight
 	} from 'lucide-svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Alert from '$lib/components/ui/alert';
@@ -285,6 +288,20 @@
 	let formPublicIp = $state('');
 	let formTimezone = $state('UTC');
 	let formError = $state('');
+	// Env-rename confirmation dialog state.
+	let showRenameConfirm = $state(false);
+	let renameConfirmFrom = $state('');
+	let renameConfirmTo = $state('');
+	let renameStackCount = $state(0);
+	let renameGitStackCount = $state(0);
+	// Set when we couldn't reliably enumerate stacks (network/permission
+	// failure). The dialog falls back to generic text instead of a count, so
+	// we never silent-rename on a transient error.
+	let renameCountsUnknown = $state(false);
+	// Whether running containers will be affected by the rename. True for
+	// socket/direct (they deploy from the staging dir). False for Hawser
+	// (the agent's deployed dir doesn't include env name).
+	let renameAffectsContainers = $state(false);
 	let formErrors = $state<{ name?: string; host?: string }>({});
 	let formSaving = $state(false);
 
@@ -360,6 +377,33 @@
 			.filter((line) => line.length > 0)
 			.join('\n');
 		return cleaned || undefined;
+	}
+
+	/**
+	 * Read a PEM file picked via <input type="file"> into the bound textarea state.
+	 * Pasting still works; this is purely additive (#125).
+	 */
+	async function loadPemFromFile(
+		event: Event,
+		assign: (text: string) => void,
+		label: string
+	) {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		try {
+			const text = await file.text();
+			if (!text.includes('-----BEGIN')) {
+				toast.error(`${file.name} does not look like a PEM file (no BEGIN block)`);
+				return;
+			}
+			assign(text);
+			toast.success(`Loaded ${label} from ${file.name}`);
+		} catch (err: any) {
+			toast.error(`Failed to read ${file.name}: ${err?.message ?? err}`);
+		} finally {
+			input.value = ''; // allow re-uploading the same file
+		}
 	}
 
 	/**
@@ -725,6 +769,12 @@
 		if (!formName.trim()) {
 			formErrors.name = 'Name is required';
 			hasErrors = true;
+		} else {
+			const nameCheck = validateEnvName(formName.trim());
+			if (!nameCheck.ok) {
+				formErrors.name = nameCheck.reason!;
+				hasErrors = true;
+			}
 		}
 		// Host is only required for direct and hawser-standard connection types
 		if (formConnectionType === 'direct' || formConnectionType === 'hawser-standard') {
@@ -843,6 +893,12 @@
 		if (!formName.trim()) {
 			formErrors.name = 'Name is required';
 			hasErrors = true;
+		} else {
+			const nameCheck = validateEnvName(formName.trim());
+			if (!nameCheck.ok) {
+				formErrors.name = nameCheck.reason!;
+				hasErrors = true;
+			}
 		}
 		// Host is only required for direct and hawser-standard connection types
 		if (formConnectionType === 'direct' || formConnectionType === 'hawser-standard') {
@@ -859,6 +915,61 @@
 		}
 
 		if (hasErrors) return;
+
+		// Every env type stores something locally under the env name:
+		// - socket/direct: the deploy staging dir AND the in-app editor source
+		//   (containers' compose project labels point here, so redeploy is
+		//   required after rename or next restart fails)
+		// - hawser-standard/edge: the in-app editor source for ALL stacks
+		//   PLUS the git-repos clones for git stacks (the agent's deployed
+		//   dir lives on the remote host and is not affected)
+		// → fire the warning whenever the name changes.
+		const newName = formName.trim();
+		const willRenameOnDisk = newName !== environment.name;
+		// "Affects containers" = redeploy required. Only true for envs where
+		// Dockhand deploys directly (socket/direct), not Hawser.
+		renameAffectsContainers =
+			environment.connectionType === 'socket' || environment.connectionType === 'direct';
+		if (willRenameOnDisk) {
+			// Count actual stacks on this env. Fail closed: if either request
+			// fails (network, 403, parse error) we treat the counts as
+			// unknown and still show the warning — better to spook the user
+			// than silent-rename when stacks might exist.
+			const [stacksRes, gitRes] = await Promise.all([
+				fetch(`/api/stacks?env=${environment.id}`).catch(() => null),
+				fetch(`/api/git/stacks?env=${environment.id}`).catch(() => null)
+			]);
+
+			let unknown = false;
+			let stacks: unknown[] = [];
+			let gitStacks: unknown[] = [];
+			if (stacksRes?.ok) {
+				try { stacks = await stacksRes.json(); } catch { unknown = true; }
+			} else {
+				unknown = true;
+			}
+			if (gitRes?.ok) {
+				try { gitStacks = await gitRes.json(); } catch { unknown = true; }
+			} else {
+				unknown = true;
+			}
+			renameStackCount = Array.isArray(stacks) ? stacks.length : 0;
+			renameGitStackCount = Array.isArray(gitStacks) ? gitStacks.length : 0;
+			renameCountsUnknown = unknown;
+
+			renameConfirmFrom = environment.name;
+			renameConfirmTo = newName;
+			showRenameConfirm = true;
+			return;
+		}
+
+		await commitEnvironmentUpdate();
+	}
+
+	// Extracted from updateEnvironment() so the rename-confirm dialog can call
+	// it after the user clicks "Rename and continue".
+	async function commitEnvironmentUpdate() {
+		if (!environment) return;
 
 		formSaving = true;
 		formError = '';
@@ -1475,7 +1586,7 @@
 				</Tabs.Trigger>
 			</Tabs.List>
 
-			<div class="overflow-y-auto py-4 h-[520px]">
+			<div class="overflow-y-auto py-4 h-[520px] [scrollbar-gutter:stable] pr-1">
 				<!-- General Tab (Connection Settings) -->
 					<Tabs.Content value="general" class="space-y-4 mt-0 h-full">
 						<!-- Name field -->
@@ -1833,9 +1944,22 @@
 							</div>
 							{#if formProtocol === 'https'}
 								<div class="space-y-4 pt-2 border-t">
-									<p class="text-xs text-muted-foreground">TLS certificates for mTLS authentication (RSA or ECDSA)</p>
+									<p class="text-xs text-muted-foreground">TLS certificates for mTLS authentication (RSA or ECDSA). Paste the PEM content or upload a file.</p>
 									<div class="space-y-2">
-										<Label for="edit-env-tls_ca">CA certificate</Label>
+										<div class="flex items-center justify-between gap-2">
+											<Label for="edit-env-tls_ca">CA certificate</Label>
+											<Button variant="ghost" size="sm" type="button" class="h-7 px-2 text-xs" onclick={() => document.getElementById('edit-env-tls_ca-file')?.click()}>
+												<Upload class="w-3 h-3 mr-1" />
+												Upload file
+											</Button>
+											<input
+												id="edit-env-tls_ca-file"
+												type="file"
+												accept=".pem,.crt,.cer,.ca,.cert,application/x-pem-file,application/x-x509-ca-cert"
+												class="hidden"
+												onchange={(e) => loadPemFromFile(e, (t) => (formTlsCa = t), 'CA certificate')}
+											/>
+										</div>
 										<textarea
 											id="edit-env-tls_ca"
 											bind:value={formTlsCa}
@@ -1844,7 +1968,20 @@
 										></textarea>
 									</div>
 									<div class="space-y-2">
-										<Label for="edit-env-tls_cert">Client certificate</Label>
+										<div class="flex items-center justify-between gap-2">
+											<Label for="edit-env-tls_cert">Client certificate</Label>
+											<Button variant="ghost" size="sm" type="button" class="h-7 px-2 text-xs" onclick={() => document.getElementById('edit-env-tls_cert-file')?.click()}>
+												<Upload class="w-3 h-3 mr-1" />
+												Upload file
+											</Button>
+											<input
+												id="edit-env-tls_cert-file"
+												type="file"
+												accept=".pem,.crt,.cer,.cert,application/x-pem-file"
+												class="hidden"
+												onchange={(e) => loadPemFromFile(e, (t) => (formTlsCert = t), 'client certificate')}
+											/>
+										</div>
 										<textarea
 											id="edit-env-tls_cert"
 											bind:value={formTlsCert}
@@ -1853,7 +1990,20 @@
 										></textarea>
 									</div>
 									<div class="space-y-2">
-										<Label for="edit-env-tls_key">Client key</Label>
+										<div class="flex items-center justify-between gap-2">
+											<Label for="edit-env-tls_key">Client key</Label>
+											<Button variant="ghost" size="sm" type="button" class="h-7 px-2 text-xs" onclick={() => document.getElementById('edit-env-tls_key-file')?.click()}>
+												<Upload class="w-3 h-3 mr-1" />
+												Upload file
+											</Button>
+											<input
+												id="edit-env-tls_key-file"
+												type="file"
+												accept=".pem,.key,application/x-pem-file"
+												class="hidden"
+												onchange={(e) => loadPemFromFile(e, (t) => (formTlsKey = t), 'client key')}
+											/>
+										</div>
 										<textarea
 											id="edit-env-tls_key"
 											bind:value={formTlsKey}
@@ -1919,7 +2069,20 @@
 							</div>
 							{#if formProtocol === 'https'}
 								<div class="space-y-2">
-									<Label for="edit-env-hawser-tls-ca">CA certificate (for self-signed)</Label>
+									<div class="flex items-center justify-between gap-2">
+										<Label for="edit-env-hawser-tls-ca">CA certificate (for self-signed)</Label>
+										<Button variant="ghost" size="sm" type="button" class="h-7 px-2 text-xs" disabled={formTlsSkipVerify} onclick={() => document.getElementById('edit-env-hawser-tls-ca-file')?.click()}>
+											<Upload class="w-3 h-3 mr-1" />
+											Upload file
+										</Button>
+										<input
+											id="edit-env-hawser-tls-ca-file"
+											type="file"
+											accept=".pem,.crt,.cer,.ca,.cert,application/x-pem-file,application/x-x509-ca-cert"
+											class="hidden"
+											onchange={(e) => loadPemFromFile(e, (t) => (formTlsCa = t), 'CA certificate')}
+										/>
+									</div>
 									<textarea
 										id="edit-env-hawser-tls-ca"
 										bind:value={formTlsCa}
@@ -1927,7 +2090,7 @@
 										class="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono text-xs"
 										disabled={formTlsSkipVerify}
 									></textarea>
-									<p class="text-xs text-muted-foreground">Paste the CA certificate if agent uses self-signed TLS (RSA or ECDSA).</p>
+									<p class="text-xs text-muted-foreground">Paste the CA certificate or upload a file if agent uses self-signed TLS (RSA or ECDSA).</p>
 								</div>
 								<div class="flex items-center justify-between">
 									<div>
@@ -2817,5 +2980,97 @@
 			onCancel={() => showIconCropper = false}
 			onSave={handleIconCropSave}
 		/>
+	</Dialog.Content>
+</Dialog.Root>
+
+<!-- Env-rename confirmation: only fires for socket/direct envs where the
+     server actually moves $DATA_DIR/stacks/<oldName> → <newName>. -->
+<Dialog.Root bind:open={showRenameConfirm}>
+	<Dialog.Content class="max-w-2xl">
+		<Dialog.Header>
+			<Dialog.Title class="flex items-center gap-2">
+				<AlertTriangle class="w-5 h-5 text-amber-500" />
+				Rename environment?
+			</Dialog.Title>
+			<Dialog.Description class="pt-2 space-y-3 text-sm">
+				<p>The following directories will be moved on the Dockhand host:</p>
+				<div class="space-y-1 text-xs font-mono bg-muted/40 rounded-md p-3 border overflow-x-auto">
+					<div class="flex items-center gap-2 whitespace-nowrap">
+						<code class="whitespace-nowrap">$DATA_DIR/stacks/{renameConfirmFrom}/</code>
+						<ArrowRight class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+						<code class="whitespace-nowrap">$DATA_DIR/stacks/{renameConfirmTo}/</code>
+					</div>
+					<div class="flex items-center gap-2 whitespace-nowrap">
+						<code class="whitespace-nowrap">$DATA_DIR/git-repos/{renameConfirmFrom}/</code>
+						<ArrowRight class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+						<code class="whitespace-nowrap">$DATA_DIR/git-repos/{renameConfirmTo}/</code>
+					</div>
+				</div>
+				{#if renameCountsUnknown}
+					<p>
+						Couldn't list the stacks on this environment — proceed only if
+						you're sure what's deployed here.
+						{#if renameAffectsContainers}
+							<strong>Any existing stacks will need to be redeployed after
+							the rename</strong> or their next container restart will fail.
+						{/if}
+					</p>
+				{:else if renameStackCount === 0 && renameGitStackCount === 0}
+					<p>No stacks are currently deployed on this environment, so the rename is safe.</p>
+				{:else if renameAffectsContainers}
+					<p>
+						{#if renameStackCount > 0 && renameGitStackCount > 0}
+							<strong>{renameStackCount} stack{renameStackCount === 1 ? '' : 's'}</strong>
+							and <strong>{renameGitStackCount} git stack{renameGitStackCount === 1 ? '' : 's'}</strong>
+							on this environment will need to be redeployed after the rename.
+						{:else if renameStackCount > 0}
+							<strong>{renameStackCount} stack{renameStackCount === 1 ? '' : 's'}</strong>
+							on this environment will need to be redeployed after the rename.
+						{:else}
+							<strong>{renameGitStackCount} git stack{renameGitStackCount === 1 ? '' : 's'}</strong>
+							on this environment will need to be redeployed after the rename.
+						{/if}
+					</p>
+					<p>
+						Running containers will keep working, but their compose project labels
+						still reference the old path. Without a redeploy, the next container
+						restart will fail because the old path no longer exists.
+					</p>
+				{:else}
+					<p>
+						{#if renameStackCount > 0 && renameGitStackCount > 0}
+							<strong>{renameStackCount} stack{renameStackCount === 1 ? '' : 's'}</strong>
+							and <strong>{renameGitStackCount} git stack{renameGitStackCount === 1 ? '' : 's'}</strong>
+							are tracked on this environment.
+						{:else if renameStackCount > 0}
+							<strong>{renameStackCount} stack{renameStackCount === 1 ? '' : 's'}</strong>
+							{renameStackCount === 1 ? 'is' : 'are'} tracked on this environment.
+						{:else}
+							<strong>{renameGitStackCount} git stack{renameGitStackCount === 1 ? '' : 's'}</strong>
+							{renameGitStackCount === 1 ? 'is' : 'are'} tracked on this environment.
+						{/if}
+					</p>
+					<p>
+						Their containers run on the Hawser agent host, where the deploy
+						directory doesn't include the env name — those keep working without
+						a redeploy. Only the local editor source and git clone caches move.
+					</p>
+				{/if}
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="flex justify-end gap-2 mt-4">
+			<Button variant="outline" onclick={() => (showRenameConfirm = false)}>
+				Cancel
+			</Button>
+			<Button
+				variant="default"
+				onclick={async () => {
+					showRenameConfirm = false;
+					await commitEnvironmentUpdate();
+				}}
+			>
+				Rename and continue
+			</Button>
+		</div>
 	</Dialog.Content>
 </Dialog.Root>

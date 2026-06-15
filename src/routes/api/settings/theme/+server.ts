@@ -13,7 +13,8 @@ const DEFAULT_THEME_SETTINGS = {
 	fontSize: 'normal',
 	gridFontSize: 'normal',
 	terminalFont: 'system-mono',
-	editorFont: 'system-mono'
+	editorFont: 'system-mono',
+	animateIcons: true
 };
 
 export const GET: RequestHandler = async () => {
@@ -25,7 +26,8 @@ export const GET: RequestHandler = async () => {
 			fontSize,
 			gridFontSize,
 			terminalFont,
-			editorFont
+			editorFont,
+			animateIcons
 		] = await Promise.all([
 			getSetting('theme_light'),
 			getSetting('theme_dark'),
@@ -33,7 +35,8 @@ export const GET: RequestHandler = async () => {
 			getSetting('theme_font_size'),
 			getSetting('theme_grid_font_size'),
 			getSetting('theme_terminal_font'),
-			getSetting('theme_editor_font')
+			getSetting('theme_editor_font'),
+			getSetting('animate_icons')
 		]);
 
 		return json({
@@ -43,7 +46,8 @@ export const GET: RequestHandler = async () => {
 			fontSize: fontSize ?? DEFAULT_THEME_SETTINGS.fontSize,
 			gridFontSize: gridFontSize ?? DEFAULT_THEME_SETTINGS.gridFontSize,
 			terminalFont: terminalFont ?? DEFAULT_THEME_SETTINGS.terminalFont,
-			editorFont: editorFont ?? DEFAULT_THEME_SETTINGS.editorFont
+			editorFont: editorFont ?? DEFAULT_THEME_SETTINGS.editorFont,
+			animateIcons: animateIcons ?? DEFAULT_THEME_SETTINGS.animateIcons
 		});
 	} catch (error) {
 		console.error('Failed to get theme settings:', error);

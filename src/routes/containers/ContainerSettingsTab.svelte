@@ -8,7 +8,9 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { TogglePill, ToggleGroup } from '$lib/components/ui/toggle-pill';
-	import { Plus, Trash2, Settings2, RefreshCw, Network, X, Ban, RotateCw, AlertTriangle, PauseCircle, Share2, Server, CircleOff, Box, ChevronDown, ChevronsUpDown, Check, ChevronRight, Cpu, Shield, HeartPulse, Wifi, HardDrive, Lock, Loader2, CheckCircle2, Package, Gpu, Search, CircleHelp } from 'lucide-svelte';
+	import { Plus, Trash2, Settings2, RefreshCw, Network, X, Ban, RotateCw, AlertTriangle, PauseCircle, Share2, Server, CircleOff, Box, ChevronDown, ChevronsUpDown, Check, ChevronRight, Cpu, Shield, HeartPulse, Wifi, HardDrive, Lock, Loader2, CheckCircle2, Package, Gpu, Search, CircleHelp, CornerDownLeft } from 'lucide-svelte';
+	import { toast } from 'svelte-sonner';
+	import { parseMemory, parseNanoCpus, parsePositiveInt } from '$lib/utils/container-resources';
 	import { parseHostPort, validatePort, validateIp, formatHostPort, expandPortBindings } from '$lib/utils/port-parse';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { currentEnvironment } from '$lib/stores/environment';
@@ -159,6 +161,11 @@
 			totalVulnerabilities?: number;
 			hasCriticalOrHigh?: boolean;
 		};
+		// Edit mode specific — needed for inline "Apply" in-place updates
+		// (restart policy, CPU/memory limits) without recreating the container.
+		// Omitted in create mode; the per-field Apply buttons are hidden then.
+		containerId?: string;
+		envId?: number;
 	}
 
 	let {
@@ -213,7 +220,9 @@
 		configSets,
 		selectedConfigSetId = $bindable(),
 		errors = $bindable(),
-		imageSummary
+		imageSummary,
+		containerId,
+		envId
 	}: Props = $props();
 
 	// Fetch networks and containers from current environment
@@ -649,6 +658,111 @@
 		}
 	}
 
+	// ---------------------------------------------------------------------
+	// In-place ("live") property updates — restart policy + resource limits.
+	// Calls POST /api/containers/[id]/update-runtime which wraps Docker's
+	// /containers/{id}/update endpoint. ONLY the property fields documented
+	// in IN_PLACE_UPDATE_FIELDS (see docker.ts) are eligible — anything else
+	// would silently fail or, worse, look like it worked. Apply buttons next
+	// to those fields call this helper; the rest of the form still requires
+	// the bottom Save button which recreates the container.
+	// ---------------------------------------------------------------------
+	type InPlaceFieldKey = 'restart' | 'memory' | 'memoryReservation' | 'nanoCpus' | 'cpuShares' | 'cpuQuota' | 'cpuPeriod' | 'pidsLimit';
+	let applyingField = $state<InPlaceFieldKey | null>(null);
+
+	/** True when this tab is wired for in-place updates (edit mode + we have an id). */
+	const canApplyInPlace = $derived(mode === 'edit' && !!containerId);
+
+	async function applyInPlace(field: InPlaceFieldKey, body: Record<string, unknown>) {
+		if (!canApplyInPlace || !containerId) return;
+		applyingField = field;
+		try {
+			const url = `/api/containers/${containerId}/update-runtime${envId ? `?env=${envId}` : ''}`;
+			const res = await fetch(url, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				toast.error(data.error || 'Update failed');
+				return;
+			}
+			toast.success('Applied — no restart needed');
+			// Surface Docker warnings (e.g. "Memory swap will fall back to ...") inline.
+			if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+				for (const w of data.warnings) toast.warning(w);
+			}
+		} catch (err: any) {
+			toast.error(err?.message || 'Update failed');
+		} finally {
+			applyingField = null;
+		}
+	}
+
+	function applyRestartPolicy() {
+		const payload: Record<string, unknown> = { Name: restartPolicy };
+		if (restartPolicy === 'on-failure' && restartMaxRetries !== '' && restartMaxRetries !== null) {
+			payload.MaximumRetryCount = Number(restartMaxRetries);
+		}
+		return applyInPlace('restart', { RestartPolicy: payload });
+	}
+
+	function applyMemoryLimit() {
+		const bytes = parseMemory(memoryLimit);
+		if (memoryLimit && bytes === undefined) {
+			toast.error('Invalid memory value (e.g. 512m, 1g)');
+			return;
+		}
+		// Docker uses 0 to clear an existing limit.
+		return applyInPlace('memory', { Memory: bytes ?? 0 });
+	}
+
+	function applyMemoryReservation() {
+		const bytes = parseMemory(memoryReservation);
+		if (memoryReservation && bytes === undefined) {
+			toast.error('Invalid memory value');
+			return;
+		}
+		return applyInPlace('memoryReservation', { MemoryReservation: bytes ?? 0 });
+	}
+
+	function applyNanoCpus() {
+		const n = parseNanoCpus(nanoCpus);
+		if (nanoCpus && n === undefined) {
+			toast.error('Invalid CPU limit (e.g. 0.5, 1.5, 2)');
+			return;
+		}
+		return applyInPlace('nanoCpus', { NanoCpus: n ?? 0 });
+	}
+
+	function applyCpuShares() {
+		const n = parsePositiveInt(cpuShares);
+		if (cpuShares && n === undefined) {
+			toast.error('Invalid CPU shares');
+			return;
+		}
+		return applyInPlace('cpuShares', { CpuShares: n ?? 0 });
+	}
+
+	function applyCpuQuota() {
+		const n = parsePositiveInt(cpuQuota);
+		if (cpuQuota && n === undefined) {
+			toast.error('Invalid CPU quota');
+			return;
+		}
+		return applyInPlace('cpuQuota', { CpuQuota: n ?? 0 });
+	}
+
+	function applyCpuPeriod() {
+		const n = parsePositiveInt(cpuPeriod);
+		if (cpuPeriod && n === undefined) {
+			toast.error('Invalid CPU period');
+			return;
+		}
+		return applyInPlace('cpuPeriod', { CpuPeriod: n ?? 0 });
+	}
+
 	function getDriverBadgeClasses(driver: string): string {
 		const base = 'text-2xs px-1.5 py-0.5 rounded font-medium';
 		switch (driver.toLowerCase()) {
@@ -775,48 +889,67 @@
 		<div class="grid grid-cols-2 gap-3">
 			<div class="space-y-1.5">
 				<Label class="text-xs font-medium">Restart policy</Label>
-				<Select.Root type="single" bind:value={restartPolicy}>
-					<Select.Trigger id="restartPolicy" tabindex={0} class="w-full h-9">
-						<span class="flex items-center">
-							{#if restartPolicy === 'no'}
-								<Ban class="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-							{:else if restartPolicy === 'always'}
-								<RotateCw class="w-3.5 h-3.5 mr-2 text-green-500" />
-							{:else if restartPolicy === 'on-failure'}
-								<AlertTriangle class="w-3.5 h-3.5 mr-2 text-amber-500" />
+				<div class="flex items-center gap-1.5">
+					<Select.Root type="single" bind:value={restartPolicy}>
+						<Select.Trigger id="restartPolicy" tabindex={0} class="w-full h-9">
+							<span class="flex items-center">
+								{#if restartPolicy === 'no'}
+									<Ban class="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+								{:else if restartPolicy === 'always'}
+									<RotateCw class="w-3.5 h-3.5 mr-2 text-green-500" />
+								{:else if restartPolicy === 'on-failure'}
+									<AlertTriangle class="w-3.5 h-3.5 mr-2 text-amber-500" />
+								{:else}
+									<PauseCircle class="w-3.5 h-3.5 mr-2 text-blue-500" />
+								{/if}
+								{restartPolicy === 'no' ? 'No' : restartPolicy === 'always' ? 'Always' : restartPolicy === 'on-failure' ? 'On failure' : 'Unless stopped'}
+							</span>
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="no">
+								{#snippet children()}
+									<Ban class="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+									No
+								{/snippet}
+							</Select.Item>
+							<Select.Item value="always">
+								{#snippet children()}
+									<RotateCw class="w-3.5 h-3.5 mr-2 text-green-500" />
+									Always
+								{/snippet}
+							</Select.Item>
+							<Select.Item value="on-failure">
+								{#snippet children()}
+									<AlertTriangle class="w-3.5 h-3.5 mr-2 text-amber-500" />
+									On failure
+								{/snippet}
+							</Select.Item>
+							<Select.Item value="unless-stopped">
+								{#snippet children()}
+									<PauseCircle class="w-3.5 h-3.5 mr-2 text-blue-500" />
+									Unless stopped
+								{/snippet}
+							</Select.Item>
+						</Select.Content>
+					</Select.Root>
+					{#if canApplyInPlace}
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							class="h-9 shrink-0 px-2"
+							disabled={applyingField !== null}
+							onclick={applyRestartPolicy}
+							title="Apply"
+						>
+							{#if applyingField === 'restart'}
+								<Loader2 class="w-3.5 h-3.5 animate-spin" />
 							{:else}
-								<PauseCircle class="w-3.5 h-3.5 mr-2 text-blue-500" />
+								<CornerDownLeft class="w-3.5 h-3.5" />
 							{/if}
-							{restartPolicy === 'no' ? 'No' : restartPolicy === 'always' ? 'Always' : restartPolicy === 'on-failure' ? 'On failure' : 'Unless stopped'}
-						</span>
-					</Select.Trigger>
-					<Select.Content>
-						<Select.Item value="no">
-							{#snippet children()}
-								<Ban class="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-								No
-							{/snippet}
-						</Select.Item>
-						<Select.Item value="always">
-							{#snippet children()}
-								<RotateCw class="w-3.5 h-3.5 mr-2 text-green-500" />
-								Always
-							{/snippet}
-						</Select.Item>
-						<Select.Item value="on-failure">
-							{#snippet children()}
-								<AlertTriangle class="w-3.5 h-3.5 mr-2 text-amber-500" />
-								On failure
-							{/snippet}
-						</Select.Item>
-						<Select.Item value="unless-stopped">
-							{#snippet children()}
-								<PauseCircle class="w-3.5 h-3.5 mr-2 text-blue-500" />
-								Unless stopped
-							{/snippet}
-						</Select.Item>
-					</Select.Content>
-				</Select.Root>
+						</Button>
+					{/if}
+				</div>
 				{#if restartPolicy === 'on-failure'}
 					<div class="space-y-1.5 mt-2">
 						<Label class="text-xs font-medium">Max retry count</Label>
@@ -1334,36 +1467,72 @@
 		</button>
 		{#if showResources}
 			<div class="px-3 pb-3 space-y-3 border-t">
-				<p class="text-xs text-muted-foreground pt-2">Configure memory and CPU limits for this container</p>
+				<p class="text-xs text-muted-foreground pt-2">
+					Configure memory and CPU limits for this container.
+					{#if canApplyInPlace}
+						The <CornerDownLeft class="w-3 h-3 inline-block -mt-0.5" /> button next to each field applies the change without restarting.
+					{/if}
+				</p>
+
+				{#snippet inlineApplyBtn(field: InPlaceFieldKey, onclick: () => void)}
+					{#if canApplyInPlace}
+						<Button type="button" variant="outline" size="sm" class="h-9 shrink-0 px-2" disabled={applyingField !== null} {onclick} title="Apply">
+							{#if applyingField === field}
+								<Loader2 class="w-3.5 h-3.5 animate-spin" />
+							{:else}
+								<CornerDownLeft class="w-3.5 h-3.5" />
+							{/if}
+						</Button>
+					{/if}
+				{/snippet}
+
 				<div class="grid grid-cols-2 gap-3">
 					<div class="space-y-1.5">
 						<Label for="memoryLimit" class="text-xs font-medium">Memory limit</Label>
-						<Input id="memoryLimit" bind:value={memoryLimit} placeholder="e.g., 512m, 1g" class="h-9" />
+						<div class="flex items-center gap-1.5">
+							<Input id="memoryLimit" bind:value={memoryLimit} placeholder="e.g., 512m, 1g" class="h-9" />
+							{@render inlineApplyBtn('memory', applyMemoryLimit)}
+						</div>
 					</div>
 					<div class="space-y-1.5">
 						<Label for="memoryReservation" class="text-xs font-medium">Memory reservation</Label>
-						<Input id="memoryReservation" bind:value={memoryReservation} placeholder="e.g., 256m" class="h-9" />
+						<div class="flex items-center gap-1.5">
+							<Input id="memoryReservation" bind:value={memoryReservation} placeholder="e.g., 256m" class="h-9" />
+							{@render inlineApplyBtn('memoryReservation', applyMemoryReservation)}
+						</div>
 					</div>
 				</div>
 				<div class="grid grid-cols-2 gap-3">
 					<div class="space-y-1.5">
 						<Label for="nanoCpus" class="text-xs font-medium">CPU limit</Label>
-						<Input id="nanoCpus" bind:value={nanoCpus} placeholder="e.g., 0.5, 1.5, 2" class="h-9" />
+						<div class="flex items-center gap-1.5">
+							<Input id="nanoCpus" bind:value={nanoCpus} placeholder="e.g., 0.5, 1.5, 2" class="h-9" />
+							{@render inlineApplyBtn('nanoCpus', applyNanoCpus)}
+						</div>
 					</div>
 					<div class="space-y-1.5">
 						<Label for="cpuShares" class="text-xs font-medium">CPU shares</Label>
-						<Input id="cpuShares" bind:value={cpuShares} type="number" placeholder="1024" class="h-9" />
+						<div class="flex items-center gap-1.5">
+							<Input id="cpuShares" bind:value={cpuShares} type="number" placeholder="1024" class="h-9" />
+							{@render inlineApplyBtn('cpuShares', applyCpuShares)}
+						</div>
 					</div>
 				</div>
 				<div class="grid grid-cols-2 gap-3">
 					<div class="space-y-1.5">
 						<Label for="cpuQuota" class="text-xs font-medium">CPU quota</Label>
-						<Input id="cpuQuota" bind:value={cpuQuota} type="number" placeholder="e.g., 50000" class="h-9" />
+						<div class="flex items-center gap-1.5">
+							<Input id="cpuQuota" bind:value={cpuQuota} type="number" placeholder="e.g., 50000" class="h-9" />
+							{@render inlineApplyBtn('cpuQuota', applyCpuQuota)}
+						</div>
 						<p class="text-xs text-muted-foreground">Microseconds per period</p>
 					</div>
 					<div class="space-y-1.5">
 						<Label for="cpuPeriod" class="text-xs font-medium">CPU period</Label>
-						<Input id="cpuPeriod" bind:value={cpuPeriod} type="number" placeholder="Default: 100000" class="h-9" />
+						<div class="flex items-center gap-1.5">
+							<Input id="cpuPeriod" bind:value={cpuPeriod} type="number" placeholder="Default: 100000" class="h-9" />
+							{@render inlineApplyBtn('cpuPeriod', applyCpuPeriod)}
+						</div>
 						<p class="text-xs text-muted-foreground">Period in microseconds</p>
 					</div>
 				</div>

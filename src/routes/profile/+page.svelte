@@ -38,6 +38,7 @@
 	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import * as Table from '$lib/components/ui/table';
 	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
+	import AnimateIconsToggle from '$lib/components/AnimateIconsToggle.svelte';
 	import { themeStore } from '$lib/stores/theme';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 
@@ -723,8 +724,9 @@
 					</Card.Title>
 					<Card.Description>Customize the look of the application</Card.Description>
 				</Card.Header>
-				<Card.Content>
+				<Card.Content class="space-y-4">
 					<ThemeSelector userId={profile.id} />
+					<AnimateIconsToggle userId={profile.id} />
 				</Card.Content>
 			</Card.Root>
 

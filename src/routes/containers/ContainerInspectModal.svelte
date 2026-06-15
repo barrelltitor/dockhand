@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import { Button } from '$lib/components/ui/button';
@@ -621,6 +622,29 @@
 						<Pencil class="w-3 h-3 text-muted-foreground hover:text-foreground" />
 					</button>
 				{/if}
+				{@const composeStack = containerData?.Config?.Labels?.['com.docker.compose.project']}
+				{#if composeStack && !loading}
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							<button
+								type="button"
+								onclick={() => {
+									open = false;
+									goto(appendEnvParam(`/stacks?search=${encodeURIComponent(composeStack)}`, $currentEnvironment?.id ?? null));
+								}}
+								class="cursor-pointer inline-flex items-center"
+							>
+								<Badge variant="outline" class="text-xs py-0 px-1.5 hover:bg-primary/10 hover:border-primary/50 transition-colors gap-1">
+									<Layers class="w-3 h-3" />
+									{composeStack}
+								</Badge>
+							</button>
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p class="text-xs whitespace-nowrap">Open stack "{composeStack}"</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
+				{/if}
 				{#if containerData?.State?.Running && !loading}
 					<span class="inline-flex items-center gap-1.5 ml-2 text-xs {isLiveConnected ? 'text-emerald-500' : 'text-muted-foreground'}" title={isLiveConnected ? 'Receiving live updates' : 'Connection lost'}>
 						<Wifi class="w-3.5 h-3.5 {isLiveConnected ? 'animate-pulse' : ''}" />
@@ -1143,7 +1167,7 @@
 															class="inline-flex items-center gap-1 text-primary hover:underline"
 															title="Open {url}"
 														>
-															<code>{binding.HostIp || '0.0.0.0'}:{binding.HostPort}</code>
+															<code>{portParsedOverride?.name ?? `${binding.HostIp || '0.0.0.0'}:${binding.HostPort}`}</code>
 															<ExternalLink class="w-3 h-3" />
 														</a>
 													{:else}

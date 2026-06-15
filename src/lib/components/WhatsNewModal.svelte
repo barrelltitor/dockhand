@@ -3,6 +3,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Sparkles, Bug, Zap, CheckCircle, ScrollText } from 'lucide-svelte';
 	import { compareVersions } from '$lib/utils/version';
+	import ChangelogText from '$lib/components/ChangelogText.svelte';
 
 	interface ChangelogEntry {
 		version: string;
@@ -66,7 +67,7 @@
 							{@const { icon: Icon, class: iconClass } = getChangeIcon(change.type)}
 							<div class="flex items-start gap-2">
 								<Icon class="w-4 h-4 mt-0.5 shrink-0 {iconClass}" />
-								<span class="text-sm">{change.text}</span>
+								<ChangelogText text={change.text} />
 							</div>
 						{/each}
 					</div>

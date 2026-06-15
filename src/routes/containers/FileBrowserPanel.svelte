@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Table from '$lib/components/ui/table';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -229,6 +229,29 @@
 		}
 	});
 
+	// ESC inside the file viewer/editor closes JUST the file, not the whole
+	// dialog. Captured at window level so the Dialog.Root wrapper never sees
+	// the key. When no file is open, ESC bubbles normally and closes the dialog.
+	function handleEscape(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (editingFile) {
+			e.stopPropagation();
+			e.preventDefault();
+			closeEditor();
+		} else if (viewingFile) {
+			e.stopPropagation();
+			e.preventDefault();
+			closeViewer();
+		}
+	}
+
+	onMount(() => {
+		window.addEventListener('keydown', handleEscape, true);
+	});
+	onDestroy(() => {
+		window.removeEventListener('keydown', handleEscape, true);
+	});
+
 	function toggleEditorTheme() {
 		editorTheme = editorTheme === 'light' ? 'dark' : 'light';
 		localStorage.setItem('dockhand-editor-theme', editorTheme);
@@ -245,7 +268,7 @@
 	// Get language from filename for CodeMirror
 	function getLanguageFromFilename(filename: string): string {
 		const name = filename.toLowerCase();
-		if (name === 'dockerfile') return 'shell';
+		if (name === 'dockerfile' || name.endsWith('.dockerfile')) return 'dockerfile';
 		if (name === 'makefile' || name === 'rakefile') return 'shell';
 		if (name.endsWith('.yml') || name.endsWith('.yaml')) return 'yaml';
 		if (name.endsWith('.json')) return 'json';
@@ -260,7 +283,10 @@
 		if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.sass') || name.endsWith('.less')) return 'css';
 		if (name.endsWith('.xml')) return 'xml';
 		if (name.endsWith('.sql')) return 'sql';
-		return 'shell';
+		if (name.endsWith('.toml')) return 'toml';
+		if (name === '.env' || name.startsWith('.env.') || name.endsWith('.env')) return 'dotenv';
+		if (name.endsWith('.ini') || name.endsWith('.conf') || name.endsWith('.cfg') || name.endsWith('.properties')) return 'ini';
+		return '';
 	}
 
 	// Check if file is editable

@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.0.33",
+    "date": "2026-06-15",
+    "changes": [
+      { "type": "feature", "text": "in-place container property updates without restart — restart policy, CPU/memory limits (#1153)" },
+      { "type": "feature", "text": "clickable stack badge in container and volume inspect modals (#1121)" },
+      { "type": "feature", "text": "clickable stack badge in volumes list row (#1122)" },
+      { "type": "feature", "text": "volumes list shows driver_opts type (NFS, CIFS, etc.) with sort and filter (#1123)" },
+      { "type": "feature", "text": "Bark iOS notifications (#1095, PR#1097, @undirectlookable)" },
+      { "type": "feature", "text": "Signal notifications via signal-cli-rest-api (#1099)" },
+      { "type": "feature", "text": "Apprise passthrough — forward to a self-hosted caronc/apprise-api server (#1099)" },
+      { "type": "fix", "text": "env editor flagged Docker/Compose built-ins as MISSING (#141)" },
+      { "type": "fix", "text": "YAML editor indentation was inconsistent when pressing Enter (#1156)" },
+      { "type": "feature", "text": "`dockhand.update=false`, `dockhand.hidden=true` and `localhost/*` images skip registry polling (#1083)" },
+      { "type": "fix", "text": "registry authentication for image pulls (#1105)" },
+      { "type": "feature", "text": "native HTTPS listener, off by default (#1102)" },
+      { "type": "fix", "text": "environments stuck \"Failed\" after VPN/Tailscale tunnel drops until agent restart (#1160)" },
+      { "type": "fix", "text": "health_status events flooding container_events table (#1165)" },
+      { "type": "fix", "text": "git stack sync removes files deleted from the repo (hash-verified) (#966, #1162)" },
+      { "type": "feature", "text": "upload TLS/mTLS certificate files in environment editor (#125)" },
+      { "type": "feature", "text": "syntax highlighting for shell, Dockerfile, TOML, INI/conf and .env files in the file browser viewer (#1055)" },
+      { "type": "feature", "text": "Animated icons now configurable (#1169)" },
+      { "type": "fix", "text": "stack deploys ignored the env's configured socket path (#1172)" },
+      { "type": "fix", "text": "environment names with characters that break path resolution (e.g. `*`) are now rejected (#1179)" }
+    ],
+    "imageTag": "fnsys/dockhand:v1.0.33"
+  },
+  {
     "version": "1.0.32",
     "date": "2026-06-06",
     "changes": [

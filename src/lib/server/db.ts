@@ -388,15 +388,17 @@ export async function getUserThemePreferences(userId: number): Promise<{
 	gridFontSize: string;
 	terminalFont: string;
 	editorFont: string;
+	animateIcons: boolean;
 }> {
-	const [lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont] = await Promise.all([
+	const [lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, animateIcons] = await Promise.all([
 		getUserSetting(userId, 'light_theme'),
 		getUserSetting(userId, 'dark_theme'),
 		getUserSetting(userId, 'font'),
 		getUserSetting(userId, 'font_size'),
 		getUserSetting(userId, 'grid_font_size'),
 		getUserSetting(userId, 'terminal_font'),
-		getUserSetting(userId, 'editor_font')
+		getUserSetting(userId, 'editor_font'),
+		getUserSetting(userId, 'animate_icons')
 	]);
 	return {
 		lightTheme: lightTheme || 'default',
@@ -405,13 +407,15 @@ export async function getUserThemePreferences(userId: number): Promise<{
 		fontSize: fontSize || 'normal',
 		gridFontSize: gridFontSize || 'normal',
 		terminalFont: terminalFont || 'system-mono',
-		editorFont: editorFont || 'system-mono'
+		editorFont: editorFont || 'system-mono',
+		// Default ON — only false when explicitly stored
+		animateIcons: animateIcons === 'false' ? false : true
 	};
 }
 
 export async function setUserThemePreferences(
 	userId: number,
-	prefs: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string }
+	prefs: { lightTheme?: string; darkTheme?: string; font?: string; fontSize?: string; gridFontSize?: string; terminalFont?: string; editorFont?: string; animateIcons?: boolean }
 ): Promise<void> {
 	const updates: Promise<void>[] = [];
 	if (prefs.lightTheme !== undefined) {
@@ -434,6 +438,9 @@ export async function setUserThemePreferences(
 	}
 	if (prefs.editorFont !== undefined) {
 		updates.push(setUserSetting(userId, 'editor_font', prefs.editorFont));
+	}
+	if (prefs.animateIcons !== undefined) {
+		updates.push(setUserSetting(userId, 'animate_icons', prefs.animateIcons ? 'true' : 'false'));
 	}
 	await Promise.all(updates);
 }
@@ -2097,6 +2104,7 @@ export interface GitStackData {
 	lastCommit: string | null;
 	syncStatus: GitSyncStatus;
 	syncError: string | null;
+	syncedFiles?: string | null; // JSON manifest { commit, files: { relPath: sha256 } } from last successful deploy
 	createdAt: string;
 	updatedAt: string;
 }
@@ -2303,6 +2311,7 @@ export async function getGitStack(id: number): Promise<GitStackWithRepo | null> 
 		lastCommit: gitStacks.lastCommit,
 		syncStatus: gitStacks.syncStatus,
 		syncError: gitStacks.syncError,
+		syncedFiles: gitStacks.syncedFiles,
 		createdAt: gitStacks.createdAt,
 		updatedAt: gitStacks.updatedAt,
 		repoName: gitRepositories.name,
@@ -2337,6 +2346,7 @@ export async function getGitStack(id: number): Promise<GitStackWithRepo | null> 
 		lastCommit: row.lastCommit,
 		syncStatus: row.syncStatus,
 		syncError: row.syncError,
+		syncedFiles: row.syncedFiles ?? null,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt,
 		repository: {
@@ -2548,6 +2558,7 @@ export async function updateGitStack(id: number, data: Partial<GitStackData>): P
 	if (data.lastCommit !== undefined) updateData.lastCommit = data.lastCommit;
 	if (data.syncStatus !== undefined) updateData.syncStatus = data.syncStatus;
 	if (data.syncError !== undefined) updateData.syncError = data.syncError;
+	if (data.syncedFiles !== undefined) updateData.syncedFiles = data.syncedFiles;
 
 	await db.update(gitStacks).set(updateData).where(eq(gitStacks.id, id));
 	return getGitStack(id);
@@ -3592,9 +3603,15 @@ export async function getContainerEventActions(): Promise<string[]> {
 
 export async function deleteOldContainerEvents(keepDays = 30): Promise<number> {
 	const cutoffDate = new Date(Date.now() - keepDays * 24 * 60 * 60 * 1000).toISOString();
-	await db.delete(containerEvents)
+	const countResult = await db.select({ count: sql<number>`count(*)` })
+		.from(containerEvents)
 		.where(sql`timestamp < ${cutoffDate}`);
-	return 0;
+	const count = Number(countResult[0]?.count ?? 0);
+	if (count > 0) {
+		await db.delete(containerEvents)
+			.where(sql`timestamp < ${cutoffDate}`);
+	}
+	return count;
 }
 
 /**
@@ -4082,9 +4099,15 @@ export async function getRecentExecutionsForSchedule(
 
 export async function cleanupOldExecutions(retentionDays: number): Promise<number> {
 	const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-	const result = await db.delete(scheduleExecutions)
+	const countResult = await db.select({ count: sql<number>`count(*)` })
+		.from(scheduleExecutions)
 		.where(sql`triggered_at < ${cutoffDate}`);
-	return 0; // SQLite/PG don't return count consistently
+	const count = Number(countResult[0]?.count ?? 0);
+	if (count > 0) {
+		await db.delete(scheduleExecutions)
+			.where(sql`triggered_at < ${cutoffDate}`);
+	}
+	return count;
 }
 
 // Settings helpers for retention

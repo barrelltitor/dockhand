@@ -31,7 +31,7 @@ import {
 import { sendEventNotification } from '../../notifications';
 import { getScannerSettings, scanImage, type VulnerabilitySeverity } from '../../scanner';
 import { parseImageNameAndTag, shouldBlockUpdate, combineScanSummaries, isSystemContainer } from './update-utils';
-import { isUpdateDisabledByLabel } from '../../container-labels';
+import { isUpdateDisabledByLabel, isHiddenByLabel } from '../../container-labels';
 import { recreateContainer } from './container-update';
 
 interface UpdateInfo {
@@ -105,9 +105,12 @@ export async function runEnvUpdateCheckJob(
 		// Clear pending updates at the start - we'll re-add as we discover updates
 		await clearPendingContainerUpdates(environmentId);
 
-		// Get all containers in this environment
-		const containers = await listContainers(true, environmentId);
-		await log(`Found ${containers.length} containers`);
+		// Get all containers in this environment, excluding ones hidden via
+		// dockhand.hidden=true (consistent with manual check-updates, #1083).
+		const allContainers = await listContainers(true, environmentId);
+		const containers = allContainers.filter(c => !isHiddenByLabel(c.labels));
+		const hiddenCount = allContainers.length - containers.length;
+		await log(`Found ${containers.length} containers${hiddenCount ? ` (${hiddenCount} hidden by label)` : ''}`);
 
 		const updatesAvailable: UpdateInfo[] = [];
 		let checkedCount = 0;

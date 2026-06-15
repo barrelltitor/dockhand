@@ -8,11 +8,12 @@
  * Usage: node ./server.js
  */
 
-import { createServer, request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
+import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
 import { createConnection } from 'node:net';
 import { connect as tlsConnect, rootCertificates } from 'node:tls';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, X509Certificate } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { handler } from './build/handler.js';
 
@@ -28,10 +29,82 @@ console.warn = (...args) => _warn(ts(), ...args);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Create HTTP server with SvelteKit handler
-const server = createServer((req, res) => {
-	handler(req, res);
-});
+// Optional native HTTPS listener (#1102). Off by default to keep existing
+// deployments unchanged. When HTTPS_MODE=on, HTTPS_CERT_PATH and
+// HTTPS_KEY_PATH must both point to readable PEM files.
+const HTTPS_MODE = (process.env.HTTPS_MODE || 'off').toLowerCase();
+const useHttps = HTTPS_MODE === 'on';
+
+let server;
+if (useHttps) {
+	const certPath = process.env.HTTPS_CERT_PATH;
+	const keyPath = process.env.HTTPS_KEY_PATH;
+	const caPath = process.env.HTTPS_CA_PATH;
+
+	console.log('[HTTPS] mode=on');
+	console.log(`[HTTPS] cert=${certPath || '(missing)'}`);
+	console.log(`[HTTPS] key=${keyPath || '(missing)'}`);
+	console.log(`[HTTPS] ca=${caPath || '(none)'}`);
+
+	if (!certPath || !keyPath) {
+		console.error('[HTTPS] HTTPS_MODE=on requires HTTPS_CERT_PATH and HTTPS_KEY_PATH');
+		process.exit(1);
+	}
+
+	let certPem, keyPem, caPem;
+	try {
+		certPem = readFileSync(certPath);
+		keyPem = readFileSync(keyPath);
+		if (caPath) caPem = readFileSync(caPath);
+	} catch (e) {
+		console.error(`[HTTPS] Failed to read cert/key file: ${e.message}`);
+		process.exit(1);
+	}
+
+	// Parse cert metadata so operators can confirm they mounted the right file.
+	try {
+		const x509 = new X509Certificate(certPem);
+		console.log(`[HTTPS] cert subject: ${x509.subject.replace(/\n/g, ', ')}`);
+		console.log(`[HTTPS] cert issuer:  ${x509.issuer.replace(/\n/g, ', ')}`);
+		console.log(`[HTTPS] cert SAN:     ${x509.subjectAltName || '(none)'}`);
+		console.log(`[HTTPS] cert valid:   ${x509.validFrom} → ${x509.validTo}`);
+		const expiresAt = new Date(x509.validTo).getTime();
+		const daysLeft = Math.floor((expiresAt - Date.now()) / 86400000);
+		if (daysLeft < 0) {
+			console.warn(`[HTTPS] WARNING: certificate expired ${-daysLeft} day(s) ago`);
+		} else if (daysLeft < 30) {
+			console.warn(`[HTTPS] WARNING: certificate expires in ${daysLeft} day(s)`);
+		} else {
+			console.log(`[HTTPS] cert expires in ${daysLeft} day(s)`);
+		}
+	} catch (e) {
+		console.error(`[HTTPS] Failed to parse certificate: ${e.message}`);
+		process.exit(1);
+	}
+
+	const tlsOptions = { cert: certPem, key: keyPem };
+	if (caPem) tlsOptions.ca = caPem;
+
+	// HSTS — only meaningful over HTTPS, so wired only here. Default 1 year;
+	// set HSTS_MAX_AGE=0 to disable.
+	const hstsMaxAge = parseInt(process.env.HSTS_MAX_AGE ?? '31536000', 10);
+	const hstsHeader = hstsMaxAge > 0 ? `max-age=${hstsMaxAge}` : null;
+	if (hstsHeader) {
+		console.log(`[HTTPS] HSTS enabled: ${hstsHeader}`);
+	} else {
+		console.log('[HTTPS] HSTS disabled (HSTS_MAX_AGE=0)');
+	}
+
+	server = createHttpsServer(tlsOptions, (req, res) => {
+		if (hstsHeader) res.setHeader('Strict-Transport-Security', hstsHeader);
+		handler(req, res);
+	});
+} else {
+	console.log(`[HTTPS] mode=off (set HTTPS_MODE=on to enable native TLS)`);
+	server = createHttpServer((req, res) => {
+		handler(req, res);
+	});
+}
 
 // Create WebSocket server attached to the HTTP server
 const wss = new WebSocketServer({ noServer: true });
@@ -458,7 +531,8 @@ function handleHawserConnection(ws, connId, remoteIp) {
 
 // Start the server
 server.listen(PORT, HOST, () => {
-	console.log(`Listening on http://${HOST}:${PORT}/ with WebSocket`);
+	const scheme = useHttps ? 'https' : 'http';
+	console.log(`Listening on ${scheme}://${HOST}:${PORT}/ with WebSocket`);
 });
 
 

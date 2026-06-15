@@ -309,7 +309,7 @@
 					class="h-10"
 				>
 					{#if isPulling}
-						<Loader2 class="w-4 h-4 mr-2 animate-spin" />
+						<Download class="w-4 h-4 mr-2 animate-spin" />
 						Pulling...
 					{:else}
 						<Download class="w-4 h-4" />
@@ -327,7 +327,7 @@
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-2">
 					{#if status === 'pulling'}
-						<Loader2 class="w-4 h-4 animate-spin text-blue-600" />
+						<Download class="w-4 h-4 animate-spin text-blue-600" />
 						<span class="text-sm">Pulling layers...</span>
 					{:else if status === 'complete'}
 						<CheckCircle2 class="w-4 h-4 text-green-600" />

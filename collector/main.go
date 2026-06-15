@@ -221,13 +221,19 @@ func buildClients(cfg *EnvConfig) (client *http.Client, streamClient *http.Clien
 		baseURL = "http://localhost"
 
 	case "http":
+		// Explicit dial timeout and TCP keepalive so connections over dead
+		// tunnels (VPN/Tailscale drops) are detected at kernel level instead
+		// of hanging indefinitely.
+		tcpDial := (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 15 * time.Second}).DialContext
 		transport = &http.Transport{
+			DialContext:         tcpDial,
 			MaxIdleConns:        16,
 			MaxIdleConnsPerHost: 16,
 			MaxConnsPerHost:     16,
 			IdleConnTimeout:     90 * time.Second,
 		}
 		streamTransport = &http.Transport{
+			DialContext:         tcpDial,
 			MaxIdleConns:        4,
 			MaxIdleConnsPerHost: 4,
 			MaxConnsPerHost:     4,
@@ -242,7 +248,9 @@ func buildClients(cfg *EnvConfig) (client *http.Client, streamClient *http.Clien
 		}
 		streamTLSCfg := tlsCfg.Clone()
 
+		tcpDial := (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 15 * time.Second}).DialContext
 		transport = &http.Transport{
+			DialContext:         tcpDial,
 			TLSClientConfig:     tlsCfg,
 			MaxIdleConns:        16,
 			MaxIdleConnsPerHost: 16,
@@ -250,6 +258,7 @@ func buildClients(cfg *EnvConfig) (client *http.Client, streamClient *http.Clien
 			IdleConnTimeout:     90 * time.Second,
 		}
 		streamTransport = &http.Transport{
+			DialContext:         tcpDial,
 			TLSClientConfig:     streamTLSCfg,
 			MaxIdleConns:        4,
 			MaxIdleConnsPerHost: 4,
@@ -322,15 +331,32 @@ func (e *environment) doStreamRequest(ctx context.Context, method, path string) 
 	return e.streamClient.Do(req)
 }
 
-func (e *environment) ping(ctx context.Context) bool {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	resp, err := e.doRequest(ctx, "GET", "/_ping")
-	if err != nil {
-		return false
+func (e *environment) ping(ctx context.Context) error {
+	attempt := func() error {
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		resp, err := e.doRequest(pingCtx, "GET", "/_ping")
+		if err != nil {
+			return err
+		}
+		drainAndClose(resp)
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("ping returned status %d", resp.StatusCode)
+		}
+		return nil
 	}
-	drainAndClose(resp)
-	return resp.StatusCode == 200
+
+	if err := attempt(); err == nil {
+		return nil
+	} else if ctx.Err() != nil {
+		return err
+	}
+
+	// Stale pooled connections (e.g. after a VPN/tunnel drop) hang requests
+	// until timeout while the host is actually reachable. Evict the pool and
+	// retry once on a guaranteed-fresh connection.
+	e.closeTransports()
+	return attempt()
 }
 
 // ---------------------------------------------------------------------------
@@ -358,11 +384,11 @@ func (m *manager) runMetrics(env *environment) {
 }
 
 func (m *manager) collectMetrics(env *environment) {
-	if !env.ping(env.ctx) {
+	if err := env.ping(env.ctx); err != nil {
 		if env.online || !env.statusReported {
 			env.online = false
 			env.statusReported = true
-			m.send(OutMessage{Type: "env_status", EnvID: env.id, Online: boolPtr(false), Error: "Docker not reachable"})
+			m.send(OutMessage{Type: "env_status", EnvID: env.id, Online: boolPtr(false), Error: "Docker not reachable: " + err.Error()})
 		}
 		return
 	}
@@ -558,11 +584,11 @@ func (m *manager) runEvents(env *environment) {
 		}
 
 		// Stream mode
-		if !env.ping(env.ctx) {
+		if err := env.ping(env.ctx); err != nil {
 			if env.online || !env.statusReported {
 				env.online = false
 				env.statusReported = true
-				m.send(OutMessage{Type: "env_status", EnvID: env.id, Online: boolPtr(false), Error: "Docker not reachable"})
+				m.send(OutMessage{Type: "env_status", EnvID: env.id, Online: boolPtr(false), Error: "Docker not reachable: " + err.Error()})
 			}
 			if !waitOrCancel(reconnectDelay) {
 				return
@@ -609,12 +635,32 @@ func (m *manager) runEvents(env *environment) {
 		// Force-close the body on context cancellation so scanner.Scan()
 		// unblocks. Without this, the goroutine can leak if the transport's
 		// internal cancel watcher doesn't fire (Go runtime implementation detail).
+		//
+		// The watchdog ticker handles half-open connections (e.g. after a
+		// VPN/tunnel drop): the stream client has no timeout, so Scan() would
+		// otherwise block forever on a dead connection that never errors.
+		// A failed ping (which retries on a fresh connection internally)
+		// means the host is unreachable — close the body so the reconnect
+		// loop takes over.
 		bodyDone := make(chan struct{})
+		var closeBodyOnce sync.Once
+		closeBody := func() { closeBodyOnce.Do(func() { resp.Body.Close() }) }
 		go func() {
-			select {
-			case <-env.ctx.Done():
-				resp.Body.Close()
-			case <-bodyDone:
+			watchdog := time.NewTicker(90 * time.Second)
+			defer watchdog.Stop()
+			for {
+				select {
+				case <-env.ctx.Done():
+					closeBody()
+					return
+				case <-bodyDone:
+					return
+				case <-watchdog.C:
+					if env.ping(env.ctx) != nil {
+						closeBody()
+						return
+					}
+				}
 			}
 		}()
 
@@ -638,7 +684,7 @@ func (m *manager) runEvents(env *environment) {
 			}
 		}
 		close(bodyDone)
-		resp.Body.Close()
+		closeBody()
 
 		if env.ctx.Err() != nil {
 			return
@@ -653,11 +699,11 @@ func (m *manager) runEvents(env *environment) {
 }
 
 func (m *manager) pollEvents(env *environment) {
-	if !env.ping(env.ctx) {
+	if err := env.ping(env.ctx); err != nil {
 		if env.online || !env.statusReported {
 			env.online = false
 			env.statusReported = true
-			m.send(OutMessage{Type: "env_status", EnvID: env.id, Online: boolPtr(false), Error: "Docker not reachable"})
+			m.send(OutMessage{Type: "env_status", EnvID: env.id, Online: boolPtr(false), Error: "Docker not reachable: " + err.Error()})
 		}
 		return
 	}
@@ -736,7 +782,7 @@ func (m *manager) runDiskChecks(env *environment) {
 }
 
 func (m *manager) checkDisk(env *environment) {
-	if !env.ping(env.ctx) {
+	if env.ping(env.ctx) != nil {
 		return
 	}
 

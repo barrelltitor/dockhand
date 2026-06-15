@@ -8,8 +8,9 @@
 import { db, hawserTokens, environments, eq, and } from './db/drizzle.js';
 import { logContainerEvent, type ContainerEventAction } from './db.js';
 import { containerEventEmitter } from './event-collector.js';
-import { sendEnvironmentNotification } from './notifications.js';
+import { sendEnvironmentNotification } from './notifications/index.js';
 import { isNotifyDisabledByLabel } from './container-labels.js';
+import { isHealthTransition } from './subprocess-manager.js';
 import { pushMetric } from './metrics-store.js';
 import { secureGetRandomValues, secureRandomUUID } from './crypto-fallback.js';
 import { hashPassword, verifyPassword } from './auth.js';
@@ -177,6 +178,12 @@ export async function handleEdgeContainerEvent(
 	try {
 		// Log the event
 		console.log(`[Hawser] Container event from env ${environmentId}: ${event.action} ${event.containerName || event.containerId}`);
+
+		// Only store health_status events on transitions (healthy↔unhealthy)
+		// to avoid flooding the DB with repeated identical health checks
+		if (!isHealthTransition(environmentId, event.containerId, event.action)) {
+			return;
+		}
 
 		// Save to database
 		const savedEvent = await logContainerEvent({
