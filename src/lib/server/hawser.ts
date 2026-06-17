@@ -265,6 +265,16 @@ export async function handleEdgeMetrics(
 // Register global handler for metrics
 globalThis.__hawserHandleMetrics = handleEdgeMetrics;
 
+let dummyHawserHash: string | null = null;
+async function getDummyHawserHash(): Promise<string> {
+	if (!dummyHawserHash) {
+		dummyHawserHash = await hashPassword('hawser_init_seed');
+	}
+	return dummyHawserHash;
+}
+// Warm the lazy init so first-call latency is consistent.
+getDummyHawserHash().catch(() => {});
+
 /**
  * Validate a Hawser token
  */
@@ -279,22 +289,32 @@ export async function validateHawserToken(
 		.from(hawserTokens)
 		.where(and(eq(hawserTokens.tokenPrefix, prefix), eq(hawserTokens.isActive, true)));
 
+	if (candidates.length === 0) {
+		await verifyPassword(token, await getDummyHawserHash());
+		return { valid: false };
+	}
+
 	for (const t of candidates) {
 		try {
 			const isValid = await verifyPassword(token, t.token);
-			if (isValid) {
-				// Update last used timestamp
-				await db
-					.update(hawserTokens)
-					.set({ lastUsed: new Date().toISOString() })
-					.where(eq(hawserTokens.id, t.id));
+			if (!isValid) continue;
 
-				return {
-					valid: true,
-					environmentId: t.environmentId ?? undefined,
-					tokenId: t.id
-				};
+			// Expiry check intentionally runs after the hash verify.
+			if (t.expiresAt && new Date(t.expiresAt) < new Date()) {
+				return { valid: false };
 			}
+
+			// Update last used timestamp
+			await db
+				.update(hawserTokens)
+				.set({ lastUsed: new Date().toISOString() })
+				.where(eq(hawserTokens.id, t.id));
+
+			return {
+				valid: true,
+				environmentId: t.environmentId ?? undefined,
+				tokenId: t.id
+			};
 		} catch {
 			// Invalid hash format, skip
 		}

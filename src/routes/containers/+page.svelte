@@ -29,6 +29,7 @@
 		Plus,
 		FileText,
 		Pencil,
+		NotepadText,
 		RefreshCw,
 		CircleArrowUp,
 		X,
@@ -88,6 +89,9 @@
 	import { ipToNumber } from '$lib/utils/ip';
 	import { formatHostPortUrl } from '$lib/utils/url';
 	import { parseCustomUrl } from '$lib/utils/custom-url';
+	import { extractTraefikUrls } from '$lib/utils/traefik-urls';
+	import { extractPangolinUrls } from '$lib/utils/pangolin-urls';
+	import { resolveChangelogUrl } from '$lib/utils/changelog-url';
 	import { detectShells, getBestShell, hasAvailableShell, USER_OPTIONS, getSavedUser, saveUserForContainer, getCustomUsers, removeCustomUser, type ShellDetectionResult } from '$lib/utils/shell-detection';
 	import { DataGrid } from '$lib/components/data-grid';
 	import type { ColumnConfig } from '$lib/types';
@@ -119,8 +123,10 @@
 	let sortField = $state<SortField>('name');
 	let sortDirection = $state<SortDirection>('asc');
 
-	// Status filter state
+	// Status filter state — also carries the synthetic 'update-available'
+	// pseudo-status (#1063), which ANDs with actual Docker states.
 	const STATUS_FILTER_STORAGE_KEY = 'dockhand-containers-status-filter';
+	const UPDATE_AVAILABLE_FILTER_VALUE = 'update-available';
 	let statusFilter = $state<string[]>([]);
 
 	// Status types with icons for filter and table
@@ -304,6 +310,35 @@
 
 	// Set of container IDs with updates available (for O(1) lookup)
 	const containersWithUpdatesSet = $derived(new Set(batchUpdateContainerIds));
+
+	// Filter dropdown entries: real statuses plus the synthetic
+	// "update-available" entry, only offered once we know about a pending
+	// update — picking it on an empty set would just empty the list (#1063).
+	const filterOptions = $derived(
+		containersWithUpdatesSet.size > 0
+			? [
+					...statusTypes,
+					{
+						value: UPDATE_AVAILABLE_FILTER_VALUE,
+						label: 'Update available',
+						icon: CircleArrowUp,
+						color: 'text-amber-500'
+					}
+				]
+			: statusTypes
+	);
+
+	// Drop the 'update-available' filter when no pending updates remain —
+	// otherwise the user has no way to deselect it (dropdown hides the
+	// entry) and the list stays empty (#1063).
+	$effect(() => {
+		if (
+			statusFilter.includes(UPDATE_AVAILABLE_FILTER_VALUE) &&
+			containersWithUpdatesSet.size === 0
+		) {
+			statusFilter = statusFilter.filter((v) => v !== UPDATE_AVAILABLE_FILTER_VALUE);
+		}
+	});
 
 	// Count of updatable containers (excluding system containers like Dockhand/Hawser)
 	const updatableContainersCount = $derived(
@@ -746,9 +781,16 @@
 			result = result.filter(c => c.state.toLowerCase() !== 'exited');
 		}
 
-		// Filter by status if any are selected
-		if (statusFilter.length > 0) {
-			result = result.filter(c => statusFilter.includes(c.state.toLowerCase()));
+		// Filter by status. The synthetic 'update-available' value (#1063)
+		// is split off so it ANDs with real-state selections instead of
+		// being treated like another Docker state.
+		const stateValues = statusFilter.filter((v) => v !== UPDATE_AVAILABLE_FILTER_VALUE);
+		const updatesOnly = statusFilter.includes(UPDATE_AVAILABLE_FILTER_VALUE);
+		if (stateValues.length > 0) {
+			result = result.filter((c) => stateValues.includes(c.state.toLowerCase()));
+		}
+		if (updatesOnly) {
+			result = result.filter((c) => containersWithUpdatesSet.has(c.id));
 		}
 
 		// Filter by search query
@@ -1397,12 +1439,14 @@
 					class="pl-8 h-8 w-48 text-sm"
 				/>
 			</div>
-			<!-- Status filter (multi-select) -->
+			<!-- Status filter (multi-select). The synthetic 'update-available'
+			     entry appears once at least one container has a pending update,
+			     and ANDs with selected real states (#1063). -->
 			<MultiSelectFilter
 				bind:value={statusFilter}
-				options={statusTypes}
+				options={filterOptions}
 				placeholder="All statuses"
-				pluralLabel="statuses"
+				pluralLabel="filters"
 				width="w-44"
 				defaultIcon={Box}
 			/>
@@ -1790,6 +1834,21 @@
 								<span title="Update available">
 									<CircleArrowUp class="w-3 h-3 text-amber-500 {$appSettings.highlightUpdates ? 'glow-amber' : ''} shrink-0" />
 								</span>
+								{#if $appSettings.showImageChangelogLinks}
+									{@const changelogUrl = resolveChangelogUrl(container.image, container.labels)}
+									{#if changelogUrl}
+										<a
+											href={changelogUrl}
+											target="_blank"
+											rel="noopener noreferrer"
+											onclick={(e) => e.stopPropagation()}
+											title="View changelog"
+											class="shrink-0 text-amber-500 hover:text-amber-400 transition-colors"
+										>
+											<NotepadText class="w-3 h-3" />
+										</a>
+									{/if}
+								{/if}
 							{/if}
 							<span class="text-xs text-muted-foreground truncate" title={container.image}>{container.image}</span>
 						</div>
@@ -1897,7 +1956,9 @@
 					{:else if column.id === 'ports'}
 						{@const exposedPorts = $appSettings.showExposedPorts ? formatExposedPorts(container.ports) : []}
 						{@const parsedUrl = parseCustomUrl(container.labels?.['dockhand.url'])}
-						{#if ports.length > 0 || exposedPorts.length > 0 || parsedUrl}
+						{@const traefikUrls = (parsedUrl || !$appSettings.honorProxyLabels) ? [] : extractTraefikUrls(container.labels)}
+						{@const pangolinUrls = (parsedUrl || !$appSettings.honorProxyLabels) ? [] : extractPangolinUrls(container.labels)}
+						{#if ports.length > 0 || exposedPorts.length > 0 || parsedUrl || traefikUrls.length > 0 || pangolinUrls.length > 0}
 							{@const compactPorts = $appSettings.compactPorts}
 							{@const displayPorts = compactPorts && ports.length > 1 ? [ports[0]] : ports}
 							{@const remainingCount = ports.length - 1}
@@ -1916,6 +1977,36 @@
 										<ExternalLink class="w-2.5 h-2.5 opacity-60" />
 									</a>
 								{/if}
+								<!-- Traefik fallback URLs (#2). dockhand.url suppresses these. -->
+								{#each traefikUrls as t}
+									<a
+										href={t.url}
+										target="_blank"
+										rel="noopener noreferrer"
+										onclick={(e) => e.stopPropagation()}
+										class="inline-flex items-center gap-0.5 text-xs bg-primary/10 hover:bg-primary/20 text-primary px-1 py-0.5 rounded transition-colors shrink-0"
+										title="Traefik router {t.router} → {t.url}"
+									>
+										<Globe class="w-2.5 h-2.5" />
+										<span class="max-w-[120px] truncate">{t.url.replace(/^https?:\/\//, '')}</span>
+										<ExternalLink class="w-2.5 h-2.5 opacity-60" />
+									</a>
+								{/each}
+								<!-- Pangolin fallback URLs (#2 follow-up). dockhand.url suppresses these. -->
+								{#each pangolinUrls as p}
+									<a
+										href={p.url}
+										target="_blank"
+										rel="noopener noreferrer"
+										onclick={(e) => e.stopPropagation()}
+										class="inline-flex items-center gap-0.5 text-xs bg-primary/10 hover:bg-primary/20 text-primary px-1 py-0.5 rounded transition-colors shrink-0"
+										title="Pangolin resource {p.resource} → {p.url}"
+									>
+										<Globe class="w-2.5 h-2.5" />
+										<span class="max-w-[120px] truncate">{p.displayName ?? p.url.replace(/^https?:\/\//, '')}</span>
+										<ExternalLink class="w-2.5 h-2.5 opacity-60" />
+									</a>
+								{/each}
 								{#each displayPorts as port}
 									{@const portParsed = parseCustomUrl(container.labels?.[`dockhand.port.${port.publicPort}.url`])}
 									{@const portUrl = portParsed?.url || null}
@@ -2381,6 +2472,11 @@
 		// Refresh the container list
 		fetchContainers();
 	}}
+	onStart={$canAccess('containers', 'start') ? (id) => startContainer(id) : undefined}
+	onStop={$canAccess('containers', 'stop') ? (id) => stopContainer(id) : undefined}
+	onRestart={$canAccess('containers', 'restart') ? (id) => restartContainer(id) : undefined}
+	onRemove={$canAccess('containers', 'remove') ? (id) => removeContainer(id) : undefined}
+	onEdit={$canAccess('containers', 'edit') ? (id) => editContainer(id) : undefined}
 />
 
 <FileBrowserModal

@@ -22,7 +22,8 @@
 		User,
 		ClipboardList,
 		Activity,
-		Timer
+		Timer,
+		LibraryBig
 	} from 'lucide-svelte';
 	import { licenseStore } from '$lib/stores/license';
 	import { authStore, hasAnyAccess } from '$lib/stores/auth';
@@ -101,6 +102,7 @@
 		{ href: '/images', Icon: Images, label: 'Images', permission: 'images' },
 		{ href: '/volumes', Icon: HardDrive, label: 'Volumes', permission: 'volumes' },
 		{ href: '/networks', Icon: Network, label: 'Networks', permission: 'networks' },
+		{ href: '/templates', Icon: LibraryBig, label: 'Templates', permission: 'templates' },
 		{ href: '/registry', Icon: Download, label: 'Registry', permission: 'registries' },
 		{ href: '/activity', Icon: Activity, label: 'Activity', permission: 'activity' },
 		{ href: '/schedules', Icon: Timer, label: 'Schedules', permission: 'schedules' },

@@ -2,6 +2,7 @@ import { gzipSync } from 'node:zlib';
 import { getContainerArchive, statContainerPath } from '$lib/server/docker';
 import { authorize } from '$lib/server/authorize';
 import { validateDockerIdParam } from '$lib/server/docker-validation';
+import { extractFirstFileFromTar } from '$lib/server/tar-extract';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, url, cookies }) => {
@@ -33,11 +34,14 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 		// Get format from query parameter (defaults to tar)
 		const format = url.searchParams.get('format') || 'tar';
 
-		// Get stat info to determine filename
+		// Get stat info to determine filename and whether the path is a directory.
+		// Directories with format=raw fall back to tar (raw only makes sense for files).
 		let filename: string;
+		let isDir = false;
 		try {
 			const stat = await statContainerPath(params.id, path, envIdNum);
 			filename = stat.name || path.split('/').pop() || 'download';
+			isDir = stat.isDir === true;
 		} catch {
 			filename = path.split('/').pop() || 'download';
 		}
@@ -54,7 +58,13 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 		let contentType = 'application/x-tar';
 		let extension = '.tar';
 
-		if (format === 'tar.gz') {
+		if (format === 'raw' && !isDir) {
+			// Strip the tar wrapper and emit raw file bytes (#1180).
+			const tarData = new Uint8Array(await response.arrayBuffer());
+			body = extractFirstFileFromTar(tarData);
+			contentType = 'application/octet-stream';
+			extension = '';
+		} else if (format === 'tar.gz') {
 			// Compress with gzip
 			const tarData = new Uint8Array(await response.arrayBuffer());
 			body = gzipSync(tarData);

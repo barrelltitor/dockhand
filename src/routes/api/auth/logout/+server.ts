@@ -3,6 +3,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import { destroySession } from '$lib/server/auth';
 import { authorize } from '$lib/server/authorize';
 import { auditAuth } from '$lib/server/audit';
+import { getClientIp } from '$lib/server/client-ip';
 
 // POST /api/auth/logout - End session
 export const POST: RequestHandler = async (event) => {
@@ -11,9 +12,7 @@ export const POST: RequestHandler = async (event) => {
 		// Get current user before destroying session for audit log
 		const auth = await authorize(cookies);
 		const username = auth.user?.username || 'unknown';
-		const clientIp = event.request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-			|| event.request.headers.get('x-real-ip')
-			|| event.getClientAddress();
+		const clientIp = getClientIp(event);
 
 		await destroySession(cookies);
 		console.log(`[Auth] Logout: user=${username} ip=${clientIp}`);

@@ -1,9 +1,10 @@
 import { gzipSync } from 'node:zlib';
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getVolumeArchive, releaseVolumeHelperContainer } from '$lib/server/docker';
+import { getVolumeArchive, releaseVolumeHelperContainer, statVolumePath } from '$lib/server/docker';
 import { authorize } from '$lib/server/authorize';
 import { validateDockerIdParam } from '$lib/server/docker-validation';
+import { extractFirstFileFromTar } from '$lib/server/tar-extract';
 
 export const GET: RequestHandler = async ({ params, url, cookies }) => {
 	const invalid = validateDockerIdParam(params.name, 'volume');
@@ -22,6 +23,18 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 	}
 
 	try {
+		// For format=raw, check if the path is a single file. Directories fall back to tar.
+		let isDir = false;
+		if (format === 'raw' && path !== '/') {
+			try {
+				const stat = await statVolumePath(params.name, path, envIdNum);
+				isDir = stat.isDir === true;
+			} catch {
+				// Stat failure: let the archive call below produce the real error
+			}
+		} else if (format === 'raw') {
+			isDir = true; // root path '/' is always a directory
+		}
 
 		const { response } = await getVolumeArchive(params.name, path, envIdNum);
 
@@ -35,7 +48,17 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 		// Prepare response based on format
 		let body: ReadableStream<Uint8Array> | Uint8Array = response.body!;
 
-		if (format === 'tar.gz') {
+		if (format === 'raw' && !isDir) {
+			// Strip the tar wrapper and emit raw file bytes (#1180).
+			const tarData = new Uint8Array(await response.arrayBuffer());
+			body = extractFirstFileFromTar(tarData);
+			// Use the file's basename, not the volume-derived path-joined name.
+			filename = path.split('/').filter(Boolean).pop() || filename;
+			contentType = 'application/octet-stream';
+			extension = '';
+
+			releaseVolumeHelperContainer(params.name, envIdNum).catch(() => {});
+		} else if (format === 'tar.gz') {
 			// Compress with gzip — fully consumes the archive stream
 			const tarData = new Uint8Array(await response.arrayBuffer());
 			body = gzipSync(tarData);

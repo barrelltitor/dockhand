@@ -76,6 +76,10 @@
 	}
 
 	let status = $state<'idle' | 'updating' | 'complete' | 'error'>('idle');
+	// Incremented on each close. The startUpdate() poll loop captures the
+	// run id at start and stops mutating state once it no longer matches —
+	// prevents a stale background poll from clobbering the next run (#1094).
+	let runId = 0;
 	let progress = $state<ContainerProgress[]>([]);
 	let progressListEl = $state<HTMLDivElement | null>(null);
 	let scrollTick = $state(0);
@@ -139,6 +143,7 @@
 	async function startUpdate() {
 		if (containerIds.length === 0) return;
 
+		const myRunId = ++runId;
 		status = 'updating';
 		progress = [];
 		currentIndex = 0;
@@ -164,6 +169,8 @@
 			const blockedIds: string[] = [];
 
 			await watchJob(jobId, (line) => {
+				// If the user closed the modal (or started another run), drop the line.
+				if (myRunId !== runId) return;
 				try {
 					const data = line.data as any;
 					scrollTick++;
@@ -282,6 +289,7 @@
 			});
 		} catch (error: any) {
 			console.error('Failed to update containers:', error);
+			if (myRunId !== runId) return;
 			status = 'error';
 			errorMessage = error.message || 'Failed to update';
 		}
@@ -290,6 +298,9 @@
 	function handleClose() {
 		open = false;
 		onClose();
+		// Invalidate any in-flight poll so its onLine callbacks stop mutating
+		// state for this modal instance (#1094).
+		runId++;
 		// Reset state
 		status = 'idle';
 		progress = [];
@@ -300,10 +311,11 @@
 	}
 
 	function handleOpenChange(isOpen: boolean) {
-		if (!isOpen && status === 'updating') {
-			// Don't allow closing while updating
-			return;
-		}
+		// The X button (DialogPrimitive.Close) bypasses controlled close, so
+		// returning early here without resetting state strands `status` at
+		// 'updating' and the next open of this modal never re-triggers
+		// startUpdate() (#1094). Always reset; the in-flight poll loop
+		// finishes against the server but the UI is freed.
 		if (!isOpen) {
 			handleClose();
 		}

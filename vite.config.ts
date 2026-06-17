@@ -574,6 +574,20 @@ function webSocketPlugin(): Plugin {
 						return;
 					}
 
+					const authFn = (globalThis as any).__authenticateWsUpgrade;
+					if (typeof authFn !== 'function') {
+						ws.send(JSON.stringify({ type: 'error', message: 'service unavailable' }));
+						ws.close(1011, 'service unavailable');
+						return;
+					}
+					const wsAuth = await authFn(req.headers);
+					if (!wsAuth) {
+						ws.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
+						ws.close(1008, 'unauthorized');
+						return;
+					}
+					(ws as any).__auth = wsAuth;
+
 					// Assign unique connection ID to this WebSocket
 					const connId = `ws-${++wsConnectionCounter}`;
 					meta.connId = connId;
@@ -592,6 +606,17 @@ function webSocketPlugin(): Plugin {
 						ws.send(JSON.stringify({ type: 'error', message: 'No container ID' }));
 						ws.close();
 						return;
+					}
+
+					const canAccessFn = (globalThis as any).__canAccessEnvForUser;
+					if (typeof canAccessFn === 'function') {
+						const ok = await canAccessFn(wsAuth, envId);
+						if (!ok) {
+							console.warn(`[WS] env access denied: user=${wsAuth.username} envId=${envId}`);
+							ws.send(JSON.stringify({ type: 'error', message: 'Access denied for this environment' }));
+							ws.close(1008, 'env access denied');
+							return;
+						}
 					}
 
 					const target = getDockerTarget(envId);

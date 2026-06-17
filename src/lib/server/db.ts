@@ -4334,6 +4334,17 @@ export async function setExternalStackPaths(paths: string[]): Promise<void> {
 	}
 }
 
+/**
+ * Idempotently add a directory to the external stack paths allowlist.
+ * Returns true if the path was newly added (false if already present).
+ */
+export async function addExternalStackPath(dir: string): Promise<boolean> {
+	const current = await getExternalStackPaths();
+	if (current.includes(dir)) return false;
+	await setExternalStackPaths([...current, dir]);
+	return true;
+}
+
 // =============================================================================
 // PRIMARY STACK LOCATION
 // =============================================================================

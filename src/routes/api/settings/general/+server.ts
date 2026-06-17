@@ -90,6 +90,13 @@ export interface GeneralSettings {
 	defaultComposeTemplate: string;
 	// Label filter mode
 	labelFilterMode: 'any' | 'all';
+	// Whether to surface URLs inferred from reverse-proxy labels — currently
+	// Traefik (traefik.http.routers.*) and Pangolin (pangolin.proxy-resources.*).
+	// When false both parsers are bypassed and no proxy-derived pills are rendered.
+	honorProxyLabels: boolean;
+	// Whether to surface a "view changelog" link next to the update badge.
+	// Resolved client-side from OCI labels / GHCR image names; no server hit.
+	showImageChangelogLinks: boolean;
 	// Whether spinning icons (animate-spin etc.) are animated (#1169)
 	animateIcons: boolean;
 }
@@ -124,6 +131,8 @@ const DEFAULT_SETTINGS: Omit<GeneralSettings, 'scheduleRetentionDays' | 'eventRe
 	defaultGrypeImage: DEFAULT_GRYPE_IMAGE,
 	defaultTrivyImage: DEFAULT_TRIVY_IMAGE,
 	labelFilterMode: 'any' as const,
+	honorProxyLabels: true,
+	showImageChangelogLinks: true,
 	animateIcons: true,
 	defaultComposeTemplate: `version: "3.8"
 
@@ -203,6 +212,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			defaultTrivyImage,
 			defaultComposeTemplate,
 			labelFilterMode,
+			honorProxyLabels,
+			showImageChangelogLinks,
 			animateIcons
 		] = await Promise.all([
 			getSetting('confirm_destructive'),
@@ -243,6 +254,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			getSetting('default_trivy_image'),
 			getSetting('default_compose_template'),
 			getSetting('label_filter_mode'),
+			getSetting('honor_proxy_labels'),
+			getSetting('show_image_changelog_links'),
 			getSetting('animate_icons')
 		]);
 
@@ -287,6 +300,8 @@ export const GET: RequestHandler = async ({ cookies }) => {
 			defaultTrivyImage: defaultTrivyImage ?? DEFAULT_TRIVY_IMAGE,
 			defaultComposeTemplate: defaultComposeTemplate ?? DEFAULT_SETTINGS.defaultComposeTemplate,
 			labelFilterMode: labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode,
+			honorProxyLabels: honorProxyLabels ?? DEFAULT_SETTINGS.honorProxyLabels,
+			showImageChangelogLinks: showImageChangelogLinks ?? DEFAULT_SETTINGS.showImageChangelogLinks,
 			animateIcons: animateIcons ?? DEFAULT_SETTINGS.animateIcons
 		};
 
@@ -305,7 +320,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	try {
 		const body = await request.json();
-		const { confirmDestructive, showStoppedContainers, highlightUpdates, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, animateIcons } = body;
+		const { confirmDestructive, showStoppedContainers, highlightUpdates, timeFormat, dateFormat, downloadFormat, defaultGrypeArgs, defaultTrivyArgs, scheduleRetentionDays, eventRetentionDays, scheduleCleanupCron, eventCleanupCron, scheduleCleanupEnabled, eventCleanupEnabled, scannerCleanupCron, scannerCleanupEnabled, logBufferSizeKb, logMaxLines, defaultTimezone, eventCollectionMode, eventPollInterval, metricsCollectionInterval, lightTheme, darkTheme, font, fontSize, gridFontSize, terminalFont, editorFont, compactPorts, showExposedPorts, formatLogTimestamps, externalStackPaths, primaryStackLocation, defaultGrypeImage, defaultTrivyImage, defaultComposeTemplate, labelFilterMode, honorProxyLabels, showImageChangelogLinks, animateIcons } = body;
 
 		if (confirmDestructive !== undefined) {
 			await setSetting('confirm_destructive', confirmDestructive);
@@ -445,6 +460,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (labelFilterMode !== undefined && (labelFilterMode === 'any' || labelFilterMode === 'all')) {
 			await setSetting('label_filter_mode', labelFilterMode);
 		}
+		if (honorProxyLabels !== undefined && typeof honorProxyLabels === 'boolean') {
+			await setSetting('honor_proxy_labels', honorProxyLabels);
+		}
+		if (showImageChangelogLinks !== undefined && typeof showImageChangelogLinks === 'boolean') {
+			await setSetting('show_image_changelog_links', showImageChangelogLinks);
+		}
 		if (animateIcons !== undefined && typeof animateIcons === 'boolean') {
 			await setSetting('animate_icons', animateIcons);
 		}
@@ -489,6 +510,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			defaultTrivyImageVal,
 			defaultComposeTemplateVal,
 			labelFilterModeVal,
+			honorProxyLabelsVal,
+			showImageChangelogLinksVal,
 			animateIconsVal
 		] = await Promise.all([
 			getSetting('confirm_destructive'),
@@ -529,6 +552,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			getSetting('default_trivy_image'),
 			getSetting('default_compose_template'),
 			getSetting('label_filter_mode'),
+			getSetting('honor_proxy_labels'),
+			getSetting('show_image_changelog_links'),
 			getSetting('animate_icons')
 		]);
 
@@ -573,6 +598,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			defaultTrivyImage: defaultTrivyImageVal ?? DEFAULT_TRIVY_IMAGE,
 			defaultComposeTemplate: defaultComposeTemplateVal ?? DEFAULT_SETTINGS.defaultComposeTemplate,
 			labelFilterMode: labelFilterModeVal ?? DEFAULT_SETTINGS.labelFilterMode,
+			honorProxyLabels: honorProxyLabelsVal ?? DEFAULT_SETTINGS.honorProxyLabels,
+			showImageChangelogLinks: showImageChangelogLinksVal ?? DEFAULT_SETTINGS.showImageChangelogLinks,
 			animateIcons: animateIconsVal ?? DEFAULT_SETTINGS.animateIcons
 		};
 

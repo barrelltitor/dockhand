@@ -505,6 +505,19 @@ export const userPreferences = sqliteTable('user_preferences', {
 	unique().on(table.userId, table.environmentId, table.key)
 ]);
 
+// Template sources
+export const templateSources = sqliteTable('template_sources', {
+	id: integer('id').primaryKey({ autoIncrement: true }),
+	sourceId: text('source_id').notNull().unique(), // stable identifier (e.g., 'portainer-lissy93')
+	name: text('name').notNull(),
+	url: text('url').notNull(),
+	enabled: integer('enabled', { mode: 'boolean' }).default(true),
+	builtin: integer('builtin', { mode: 'boolean' }).default(false),
+	sortOrder: integer('sort_order').default(0),
+	createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+	updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`)
+});
+
 // =============================================================================
 // TYPE EXPORTS
 // =============================================================================

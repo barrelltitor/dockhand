@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { getEnvironment, updateEnvironment } from '$lib/server/db';
 import { getDockerInfo, getHawserInfo } from '$lib/server/docker';
 import { edgeConnections, isEdgeConnected } from '$lib/server/hawser';
+import { daemonIsPodman } from '$lib/server/scanner-socket-detect';
 
 export const POST: RequestHandler = async ({ params }) => {
 	try {
@@ -35,14 +36,18 @@ export const POST: RequestHandler = async ({ params }) => {
 			// Agent is connected - try to get Docker info with shorter timeout
 			console.log(`[Test] Edge environment ${id} (${env.name}) - agent connected, testing Docker...`);
 			try {
-				const info = await getDockerInfo(env.id) as any;
+				const [info, isPodman] = await Promise.all([
+					getDockerInfo(env.id) as Promise<any>,
+					daemonIsPodman(env.id)
+				]);
 				return json({
 					success: true,
 					info: {
 						serverVersion: info.ServerVersion,
 						containers: info.Containers,
 						images: info.Images,
-						name: info.Name
+						name: info.Name,
+						engine: isPodman ? 'podman' : 'docker'
 					},
 					isEdgeMode: true,
 					hawser: edgeConn ? {
@@ -70,17 +75,20 @@ export const POST: RequestHandler = async ({ params }) => {
 			}
 		}
 
-		// For Hawser Standard mode, fetch Docker info and Hawser info in parallel
-		// (parallel calls are more efficient and avoid sequential connection issues)
+		// Fetch Docker info, podman detection, and (for hawser-standard) hawser
+		// info in parallel — faster, and avoids serializing remote calls.
 		let info: any;
 		let hawserInfo = null;
+		let isPodman = false;
 		if (env.connectionType === 'hawser-standard') {
-			const [dockerResult, hawserResult] = await Promise.all([
+			const [dockerResult, hawserResult, detected] = await Promise.all([
 				getDockerInfo(env.id),
-				getHawserInfo(id)
+				getHawserInfo(id),
+				daemonIsPodman(env.id)
 			]);
 			info = dockerResult;
 			hawserInfo = hawserResult;
+			isPodman = detected;
 			if (hawserInfo?.hawserVersion) {
 				await updateEnvironment(id, {
 					hawserVersion: hawserInfo.hawserVersion,
@@ -90,7 +98,12 @@ export const POST: RequestHandler = async ({ params }) => {
 				});
 			}
 		} else {
-			info = await getDockerInfo(env.id);
+			const [dockerResult, detected] = await Promise.all([
+				getDockerInfo(env.id),
+				daemonIsPodman(env.id)
+			]);
+			info = dockerResult;
+			isPodman = detected;
 		}
 
 		return json({
@@ -99,7 +112,8 @@ export const POST: RequestHandler = async ({ params }) => {
 				serverVersion: info.ServerVersion,
 				containers: info.Containers,
 				images: info.Images,
-				name: info.Name
+				name: info.Name,
+				engine: isPodman ? 'podman' : 'docker'
 			},
 			hawser: hawserInfo
 		});

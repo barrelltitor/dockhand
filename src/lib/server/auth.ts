@@ -137,6 +137,14 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 	}
 }
 
+let dummyAuthHashCache: Promise<string> | null = null;
+export function getDummyAuthHash(): Promise<string> {
+	if (!dummyAuthHashCache) {
+		dummyAuthHashCache = hashPassword(`dummy-${Math.random()}-${Date.now()}`);
+	}
+	return dummyAuthHashCache;
+}
+
 // ============================================
 // Session Management
 // ============================================
@@ -241,11 +249,22 @@ function getSessionIdFromCookies(cookies: Cookies): string | null {
 export async function validateSession(cookies: Cookies): Promise<AuthenticatedUser | null> {
 	const sessionId = getSessionIdFromCookies(cookies);
 	if (!sessionId) return null;
+	return validateSessionById(sessionId);
+}
+
+/**
+ * Validate a session by raw session ID (without the SvelteKit Cookies object).
+ *
+ * Used by WebSocket upgrade handlers in server.js / vite.config.ts that only
+ * have a raw Cookie header string. Mirrors validateSession() semantics:
+ * returns the AuthenticatedUser on success, null on missing/expired/disabled.
+ */
+export async function validateSessionById(sessionId: string): Promise<AuthenticatedUser | null> {
+	if (!sessionId) return null;
 
 	const session = await dbGetSession(sessionId);
 	if (!session) return null;
 
-	// Check if session is expired
 	const expiresAt = new Date(session.expiresAt);
 	if (expiresAt < new Date()) {
 		await dbDeleteSession(sessionId);
@@ -257,6 +276,13 @@ export async function validateSession(cookies: Cookies): Promise<AuthenticatedUs
 
 	return await buildAuthenticatedUser(user, session.provider as 'local' | 'ldap' | 'oidc');
 }
+
+/**
+ * Cookie name used for browser session auth. Exported so raw header parsers
+ * (WebSocket upgrade handlers) can look it up without re-encoding the
+ * constant.
+ */
+export const SESSION_COOKIE = SESSION_COOKIE_NAME;
 
 /**
  * Destroy a session (logout)
@@ -461,13 +487,14 @@ export async function authenticateLocal(
 	const user = await getUserByUsername(username);
 
 	if (!user) {
-		// Use constant time to prevent timing attacks
-		await hashPassword('dummy');
+		await verifyPassword(password, await getDummyAuthHash());
 		return { success: false, error: 'Invalid username or password' };
 	}
 
 	if (!user.isActive) {
-		return { success: false, error: 'Account is disabled' };
+		await verifyPassword(password, await getDummyAuthHash());
+		console.warn(`[Auth] Login attempt for disabled account: user=${username}`);
+		return { success: false, error: 'Invalid username or password' };
 	}
 
 	const validPassword = await verifyPassword(password, user.passwordHash);

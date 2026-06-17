@@ -34,6 +34,7 @@ let cachedMounts: Array<{ source: string; destination: string }> | null = null;
 // Used by scanner to replicate how Dockhand connects to Docker
 let cachedOwnDockerHost: string | null = null;
 let cachedOwnNetworkMode: string | null = null;
+let cachedOwnAllNetworks: string[] | null = null;
 let cachedOwnExtraHosts: string[] | null = null;
 
 /**
@@ -166,7 +167,10 @@ export async function detectHostDataDir(): Promise<string | null> {
 			}
 		}
 
-		// Cache Dockhand's network (prefer non-default for service discovery)
+		// Cache Dockhand's networks. Picks one as the primary networkMode
+		// (custom net first, falling back to bridge) and keeps the full list
+		// so callers can warn when a setup is fragile — e.g. socket-proxy
+		// living on a network other than the one the scanner joins (#1011).
 		const networks = containerInfo.NetworkSettings?.Networks;
 		if (networks) {
 			const custom = Object.keys(networks).filter(
@@ -174,8 +178,9 @@ export async function detectHostDataDir(): Promise<string | null> {
 			);
 			cachedOwnNetworkMode = custom.length > 0 ? custom[0]
 				: networks.bridge ? 'bridge' : null;
+			cachedOwnAllNetworks = Object.keys(networks);
 			if (cachedOwnNetworkMode) {
-				console.log(`[HostPath] Detected own network: ${cachedOwnNetworkMode}`);
+				console.log(`[HostPath] Detected own network: ${cachedOwnNetworkMode} (all: ${cachedOwnAllNetworks.join(', ')})`);
 			}
 		}
 
@@ -243,6 +248,15 @@ export function getOwnDockerHost(): string | null {
  */
 export function getOwnNetworkMode(): string | null {
 	return cachedOwnNetworkMode;
+}
+
+/**
+ * All Docker networks Dockhand itself is attached to. The scanner uses
+ * this to detect split-network setups and warn that socket-proxy may not
+ * be reachable from the network it actually joins (#1011).
+ */
+export function getOwnAllNetworks(): string[] {
+	return cachedOwnAllNetworks ? [...cachedOwnAllNetworks] : [];
 }
 
 /**

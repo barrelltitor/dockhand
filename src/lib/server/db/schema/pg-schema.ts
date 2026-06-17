@@ -507,3 +507,16 @@ export const userPreferences = pgTable('user_preferences', {
 }, (table) => [
 	unique().on(table.userId, table.environmentId, table.key)
 ]);
+
+// Template sources
+export const templateSources = pgTable('template_sources', {
+	id: serial('id').primaryKey(),
+	sourceId: text('source_id').notNull().unique(), // stable identifier (e.g., 'portainer-lissy93')
+	name: text('name').notNull(),
+	url: text('url').notNull(),
+	enabled: boolean('enabled').default(true),
+	builtin: boolean('builtin').default(false),
+	sortOrder: integer('sort_order').default(0),
+	createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp('updated_at', { mode: 'string' }).defaultNow()
+});

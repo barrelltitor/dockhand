@@ -79,6 +79,7 @@
 			containers: number;
 			images: number;
 			name: string;
+			engine?: 'docker' | 'podman';
 		};
 	}
 
@@ -576,7 +577,12 @@
 							<!-- Docker Version Column -->
 							<Table.Cell>
 								{#if testResult?.info?.serverVersion}
-									<span class="text-sm text-muted-foreground">{testResult.info.serverVersion}</span>
+									<div class="flex items-center gap-1.5">
+										<span class="text-sm text-muted-foreground">{testResult.info.serverVersion}</span>
+										{#if testResult.info.engine === 'podman'}
+											<Badge variant="secondary" class="text-[10px] px-1.5 py-0 leading-tight">Podman</Badge>
+										{/if}
+									</div>
 								{:else}
 									<span class="text-muted-foreground text-sm">—</span>
 								{/if}

@@ -168,7 +168,7 @@ globalThis.__terminalHandleExecMessage = (msg) => {
 };
 
 // Handle WebSocket upgrade
-server.on('upgrade', (req, socket, head) => {
+server.on('upgrade', async (req, socket, head) => {
 	const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
 	// Only handle our specific WebSocket paths
@@ -180,7 +180,30 @@ server.on('upgrade', (req, socket, head) => {
 		return;
 	}
 
+	let wsAuth = null;
+	if (isTerminal) {
+		try {
+			if (typeof globalThis.__authenticateWsUpgrade !== 'function') {
+				socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+				socket.destroy();
+				return;
+			}
+			wsAuth = await globalThis.__authenticateWsUpgrade(req.headers);
+			if (!wsAuth) {
+				socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+				socket.destroy();
+				return;
+			}
+		} catch (err) {
+			console.error('[WS] auth error during upgrade:', err);
+			socket.write('HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n');
+			socket.destroy();
+			return;
+		}
+	}
+
 	wss.handleUpgrade(req, socket, head, (ws) => {
+		if (wsAuth) ws.__auth = wsAuth;
 		wss.emit('connection', ws, req);
 	});
 });
@@ -221,6 +244,22 @@ async function handleTerminalConnection(ws, url, connId) {
 		ws.send(JSON.stringify({ type: 'error', message: 'No container ID' }));
 		ws.close();
 		return;
+	}
+
+	if (ws.__auth && typeof globalThis.__canAccessEnvForUser === 'function') {
+		try {
+			const ok = await globalThis.__canAccessEnvForUser(ws.__auth, envId);
+			if (!ok) {
+				console.warn(`[WS] env access denied: user=${ws.__auth.username} envId=${envId}`);
+				ws.send(JSON.stringify({ type: 'error', message: 'Access denied for this environment' }));
+				ws.close(1008, 'env access denied');
+				return;
+			}
+		} catch (err) {
+			console.error('[WS] env access check failed:', err);
+			ws.close(1011, 'internal error');
+			return;
+		}
 	}
 
 	try {

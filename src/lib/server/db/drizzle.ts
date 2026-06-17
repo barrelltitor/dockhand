@@ -769,7 +769,8 @@ async function seedDatabase(): Promise<void> {
 		license: ['manage'],
 		audit_logs: ['view'],
 		activity: ['view'],
-		schedules: ['view', 'edit', 'run']
+		schedules: ['view', 'edit', 'run'],
+		templates: ['view', 'deploy', 'manage']
 	});
 
 	const operatorPermissions = JSON.stringify({
@@ -788,7 +789,8 @@ async function seedDatabase(): Promise<void> {
 		license: [],
 		audit_logs: [],
 		activity: ['view'],
-		schedules: ['view', 'edit', 'run']
+		schedules: ['view', 'edit', 'run'],
+		templates: ['view', 'deploy']
 	});
 
 	const viewerPermissions = JSON.stringify({
@@ -807,8 +809,30 @@ async function seedDatabase(): Promise<void> {
 		license: [],
 		audit_logs: [],
 		activity: ['view'],
-		schedules: ['view']
+		schedules: ['view'],
+		templates: ['view']
 	});
+
+	// Seed template sources if table is empty
+	const existingTemplateSources = await db.select().from(schema.templateSources);
+	if (existingTemplateSources.length === 0) {
+		// Inline defaults to avoid circular dependency (library.ts imports db/drizzle)
+		const defaultSources = [
+			{ sourceId: 'portainer-lissy93', name: 'Portainer templates (Lissy93)', url: 'https://raw.githubusercontent.com/Lissy93/portainer-templates/main/templates.json', enabled: true, builtin: true, sortOrder: 0 },
+			{ sourceId: 'ntv-one', name: 'NTV-One (consolidated)', url: 'https://raw.githubusercontent.com/ntv-one/portainer/main/template.json', enabled: false, builtin: true, sortOrder: 1 },
+			{ sourceId: 'mlva', name: 'MLVA (TheLustriVA)', url: 'https://raw.githubusercontent.com/TheLustriVA/portainer-templates-Nov-2022-collection/main/templates_2_2_rc_2_2.json', enabled: false, builtin: true, sortOrder: 2 },
+			{ sourceId: 'selfhostedpro', name: 'SelfHostedPro', url: 'https://raw.githubusercontent.com/SelfhostedPro/selfhosted_templates/master/Template/portainer-v2.json', enabled: false, builtin: true, sortOrder: 3 },
+			{ sourceId: 'portainer-qballjos', name: 'Qballjos (homelab)', url: 'https://raw.githubusercontent.com/Qballjos/portainer_templates/master/Template/template.json', enabled: false, builtin: true, sortOrder: 4 },
+			{ sourceId: 'lsio-technorabilia', name: 'LinuxServer.io (Technorabilia)', url: 'https://raw.githubusercontent.com/technorabilia/portainer-templates/main/lsio/templates/templates.json', enabled: true, builtin: true, sortOrder: 5 },
+			{ sourceId: 'mikestraney', name: 'MikeStraney', url: 'https://raw.githubusercontent.com/mikestraney/portainer-templates/master/templates.json', enabled: false, builtin: true, sortOrder: 6 },
+			{ sourceId: 'pi-hosted-amd64', name: 'Pi-Hosted (amd64)', url: 'https://raw.githubusercontent.com/pi-hosted/pi-hosted/master/template/portainer-v2-amd64.json', enabled: false, builtin: true, sortOrder: 7 },
+			{ sourceId: 'pi-hosted-arm64', name: 'Pi-Hosted (arm64)', url: 'https://raw.githubusercontent.com/pi-hosted/pi-hosted/master/template/portainer-v2-arm64.json', enabled: false, builtin: true, sortOrder: 8 },
+		];
+		for (const source of defaultSources) {
+			await db.insert(schema.templateSources).values(source);
+		}
+		logStep('Created default template sources');
+	}
 
 	const existingRoles = await db.select().from(schema.roles);
 	if (existingRoles.length === 0) {

@@ -3,7 +3,7 @@ import { browser } from '$app/environment';
 
 export type TimeFormat = '12h' | '24h';
 export type DateFormat = 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'DD.MM.YYYY';
-export type DownloadFormat = 'tar' | 'tar.gz';
+export type DownloadFormat = 'tar' | 'tar.gz' | 'raw';
 export type EventCollectionMode = 'stream' | 'poll';
 export type LabelFilterMode = 'any' | 'all';
 
@@ -39,6 +39,8 @@ export interface AppSettings {
 	defaultTrivyImage: string;
 	defaultComposeTemplate: string;
 	labelFilterMode: LabelFilterMode;
+	honorProxyLabels: boolean;
+	showImageChangelogLinks: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -72,6 +74,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 	defaultGrypeImage: 'anchore/grype:v0.110.0',
 	defaultTrivyImage: 'aquasec/trivy:0.69.3',
 	labelFilterMode: 'any',
+	honorProxyLabels: true,
+	showImageChangelogLinks: true,
 	defaultComposeTemplate: `version: "3.8"
 
 services:
@@ -151,7 +155,9 @@ function createSettingsStore() {
 					defaultGrypeImage: settings.defaultGrypeImage ?? DEFAULT_SETTINGS.defaultGrypeImage,
 					defaultTrivyImage: settings.defaultTrivyImage ?? DEFAULT_SETTINGS.defaultTrivyImage,
 					defaultComposeTemplate: settings.defaultComposeTemplate ?? DEFAULT_SETTINGS.defaultComposeTemplate,
-				labelFilterMode: settings.labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode
+				labelFilterMode: settings.labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode,
+				honorProxyLabels: settings.honorProxyLabels ?? DEFAULT_SETTINGS.honorProxyLabels,
+				showImageChangelogLinks: settings.showImageChangelogLinks ?? DEFAULT_SETTINGS.showImageChangelogLinks
 				});
 			}
 		} catch {
@@ -202,7 +208,9 @@ function createSettingsStore() {
 					defaultGrypeImage: updatedSettings.defaultGrypeImage ?? DEFAULT_SETTINGS.defaultGrypeImage,
 					defaultTrivyImage: updatedSettings.defaultTrivyImage ?? DEFAULT_SETTINGS.defaultTrivyImage,
 					defaultComposeTemplate: updatedSettings.defaultComposeTemplate ?? DEFAULT_SETTINGS.defaultComposeTemplate,
-				labelFilterMode: updatedSettings.labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode
+				labelFilterMode: updatedSettings.labelFilterMode ?? DEFAULT_SETTINGS.labelFilterMode,
+				honorProxyLabels: updatedSettings.honorProxyLabels ?? DEFAULT_SETTINGS.honorProxyLabels,
+				showImageChangelogLinks: updatedSettings.showImageChangelogLinks ?? DEFAULT_SETTINGS.showImageChangelogLinks
 				});
 			}
 		} catch (error) {
@@ -443,6 +451,20 @@ function createSettingsStore() {
 			update((current) => {
 				const newSettings = { ...current, labelFilterMode: value };
 				saveSettings({ labelFilterMode: value });
+				return newSettings;
+			});
+		},
+		setHonorProxyLabels: (value: boolean) => {
+			update((current) => {
+				const newSettings = { ...current, honorProxyLabels: value };
+				saveSettings({ honorProxyLabels: value });
+				return newSettings;
+			});
+		},
+		setShowImageChangelogLinks: (value: boolean) => {
+			update((current) => {
+				const newSettings = { ...current, showImageChangelogLinks: value };
+				saveSettings({ showImageChangelogLinks: value });
 				return newSettings;
 			});
 		},

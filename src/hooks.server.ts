@@ -18,6 +18,11 @@ import { join } from 'path';
 import type { HandleServerError, Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { startRssTracker, stopRssTracker, rssBeforeOp, rssAfterOp } from '$lib/server/rss-tracker';
+import { getClientIp } from '$lib/server/client-ip';
+// Side-effect import: installs globalThis.__authenticateWsUpgrade and
+// globalThis.__canAccessEnvForUser used by the raw WS upgrade handlers in
+// server.js / vite.config.ts to authenticate /api/containers/*/exec.
+import '$lib/server/ws-auth';
 
 // Content types worth compressing
 const COMPRESSIBLE_TYPES = [
@@ -217,16 +222,6 @@ setInterval(() => {
 		if (now - entry.firstFail > BEARER_FAIL_WINDOW_MS) bearerFailCounts.delete(ip);
 	}
 }, BEARER_COOLDOWN_MS).unref?.();
-
-function getClientIp(event: { request: Request; getClientAddress?: () => string }): string {
-	// Prefer socket-level IP (SvelteKit resolves proxy headers via adapter config)
-	// This prevents X-Forwarded-For spoofing to bypass rate limiting
-	try {
-		const addr = event.getClientAddress?.();
-		if (addr) return addr;
-	} catch { /* getClientAddress may throw if unavailable */ }
-	return 'unknown';
-}
 
 function recordBearerFailure(ip: string): void {
 	const now = Date.now();

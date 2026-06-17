@@ -23,6 +23,8 @@
 	let highlightUpdates = $derived($appSettings.highlightUpdates);
 	let compactPorts = $derived($appSettings.compactPorts);
 	let showExposedPorts = $derived($appSettings.showExposedPorts);
+	let honorProxyLabels = $derived($appSettings.honorProxyLabels);
+	let showImageChangelogLinks = $derived($appSettings.showImageChangelogLinks);
 	let timeFormat = $derived($appSettings.timeFormat);
 	let dateFormat = $derived($appSettings.dateFormat);
 	let downloadFormat = $derived($appSettings.downloadFormat);
@@ -115,6 +117,18 @@ services:
 		{ value: 'MM/DD/YYYY', label: 'MM/DD/YYYY', example: '12/31/2024' },
 		{ value: 'YYYY-MM-DD', label: 'YYYY-MM-DD', example: '2024-12-31' }
 	];
+
+	const downloadFormatOptions: { value: DownloadFormat; label: string; description: string }[] = [
+		{ value: 'tar', label: 'tar', description: 'Uncompressed archive' },
+		{ value: 'tar.gz', label: 'tar.gz', description: 'Gzip-compressed archive' },
+		{ value: 'raw', label: 'No archive', description: 'Single file, raw bytes' }
+	];
+
+	const downloadFormatLabel: Record<DownloadFormat, string> = {
+		tar: 'tar',
+		'tar.gz': 'tar.gz',
+		raw: 'No archive'
+	};
 
 	function handleScheduleRetentionChange(e: Event) {
 		const value = Math.max(1, Math.min(365, parseInt((e.target as HTMLInputElement).value) || 30));
@@ -290,6 +304,28 @@ services:
 							</div>
 							<div class="space-y-1">
 								<div class="flex items-center gap-3">
+									<Label>Show changelog links</Label>
+									<Tooltip.Root>
+										<Tooltip.Trigger>
+											<HelpCircle class="w-3.5 h-3.5 text-muted-foreground" />
+										</Tooltip.Trigger>
+										<Tooltip.Content side="top" class="max-w-xs">
+											<p>Surface a release-notes link next to the image name on rows with updates available. The link is resolved from the image's <code>org.opencontainers.image.source</code> label, from the <code>ghcr.io</code> registry path, or from an explicit <code>dockhand.changelog.url</code> label override.</p>
+										</Tooltip.Content>
+									</Tooltip.Root>
+									<TogglePill
+										checked={showImageChangelogLinks}
+										onchange={(checked) => {
+											appSettings.setShowImageChangelogLinks(checked);
+											toast.success(checked ? 'Changelog links shown' : 'Changelog links hidden');
+										}}
+										disabled={!$canAccess('settings', 'edit')}
+									/>
+								</div>
+								<p class="text-xs text-muted-foreground">Show a release-notes icon next to images with updates available</p>
+							</div>
+							<div class="space-y-1">
+								<div class="flex items-center gap-3">
 									<Label>Compact port display</Label>
 									<TogglePill
 										checked={compactPorts}
@@ -323,6 +359,28 @@ services:
 									/>
 								</div>
 								<p class="text-xs text-muted-foreground">Display internal container ports in the container list grid</p>
+							</div>
+							<div class="space-y-1">
+								<div class="flex items-center gap-3">
+									<Label>Honor Traefik/Pangolin labels</Label>
+									<Tooltip.Root>
+										<Tooltip.Trigger>
+											<HelpCircle class="w-3.5 h-3.5 text-muted-foreground" />
+										</Tooltip.Trigger>
+										<Tooltip.Content side="top" class="max-w-xs">
+											<p>Parse <code>traefik.http.routers.&lt;name&gt;.rule</code> and <code>pangolin.proxy-resources.&lt;name&gt;.full-domain</code> labels and surface the resulting URLs as clickable pills next to ports. When off, only explicit <code>dockhand.url</code> labels are shown.</p>
+										</Tooltip.Content>
+									</Tooltip.Root>
+									<TogglePill
+										checked={honorProxyLabels}
+										onchange={(checked) => {
+											appSettings.setHonorProxyLabels(checked);
+											toast.success(checked ? 'Proxy labels honored' : 'Proxy labels ignored');
+										}}
+										disabled={!$canAccess('settings', 'edit')}
+									/>
+								</div>
+								<p class="text-xs text-muted-foreground">Show URLs inferred from Traefik and Pangolin labels alongside dockhand.url</p>
 							</div>
 							<div class="space-y-1">
 								<div class="flex items-center gap-3">
@@ -470,18 +528,34 @@ services:
 							<div class="space-y-1">
 								<div class="flex items-center gap-3">
 									<Label>Download format</Label>
-									<ToggleSwitch
+									<Select.Root
+										type="single"
 										value={downloadFormat}
-										leftValue="tar"
-										rightValue="tar.gz"
-										onchange={(newFormat) => {
-											appSettings.setDownloadFormat(newFormat as DownloadFormat);
-											toast.success(`Download format set to ${newFormat}`);
+										onValueChange={(value) => {
+											if (value) {
+												appSettings.setDownloadFormat(value as DownloadFormat);
+												toast.success(`Download format set to ${downloadFormatLabel[value as DownloadFormat]}`);
+											}
 										}}
 										disabled={!$canAccess('settings', 'edit')}
-									/>
+									>
+										<Select.Trigger class="w-[180px]">
+											<FileText class="w-4 h-4 mr-2" />
+											<span>{downloadFormatLabel[downloadFormat]}</span>
+										</Select.Trigger>
+										<Select.Content>
+											{#each downloadFormatOptions as option}
+												<Select.Item value={option.value}>
+													<div class="flex items-center justify-between w-full gap-4">
+														<span>{option.label}</span>
+														<span class="text-xs text-muted-foreground">{option.description}</span>
+													</div>
+												</Select.Item>
+											{/each}
+										</Select.Content>
+									</Select.Root>
 								</div>
-								<p class="text-xs text-muted-foreground">Archive format when downloading files from containers</p>
+								<p class="text-xs text-muted-foreground">Format when downloading files from containers or volumes. "No archive" emits raw bytes for single files; directories still download as tar.</p>
 							</div>
 						</div>
 						<div class="space-y-4">

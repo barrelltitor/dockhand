@@ -13,10 +13,11 @@ import {
 } from '$lib/server/auth';
 import { getUser, getUserByUsername } from '$lib/server/db';
 import { auditAuth } from '$lib/server/audit';
+import { getClientIp } from '$lib/server/client-ip';
 
 // POST /api/auth/login - Authenticate user
 export const POST: RequestHandler = async (event) => {
-	const { request, cookies, getClientAddress } = event;
+	const { request, cookies } = event;
 	// Check if auth is enabled
 	if (!(await isAuthEnabled())) {
 		return json({ error: 'Authentication is not enabled' }, { status: 400 });
@@ -29,10 +30,9 @@ export const POST: RequestHandler = async (event) => {
 			return json({ error: 'Username and password are required' }, { status: 400 });
 		}
 
-		// Rate limiting by IP and username
-		const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-			|| request.headers.get('x-real-ip')
-			|| getClientAddress();
+		// Rate-limit key derived from socket IP + username. See client-ip.ts
+		// for how XFF is handled (opt-in via TRUST_FORWARDED_HEADERS).
+		const clientIp = getClientIp(event);
 		const rateLimitKey = `${clientIp}:${username}`;
 
 		const { limited, retryAfter } = isRateLimited(rateLimitKey);

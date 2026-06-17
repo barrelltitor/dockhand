@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Cpu, MemoryStick, Box, Globe, ChevronDown, Check, HardDrive, Clock, Wifi, WifiOff, Route, UndoDot, Icon, AlertCircle, Loader2, Search, X } from 'lucide-svelte';
+	import { Cpu, MemoryStick, Box, Globe, ChevronDown, Check, HardDrive, Clock, Wifi, WifiOff, Route, UndoDot, Icon, AlertCircle, Loader2, Search, Server, X } from 'lucide-svelte';
 	import { whale } from '@lucide/lab';
 	import { Button } from '$lib/components/ui/button';
 	import { currentEnvironment, environments, type Environment } from '$lib/stores/environment';
@@ -94,6 +94,22 @@
 			envAbortController = null;
 		}
 	}
+
+	// Display string for the env hostname / IP in the header (#962).
+	// Show both when available; drop only the field that is unknown/empty.
+	// Hide the whole block when neither is meaningful (e.g. hawser-edge
+	// reports 'unknown' for both).
+	const hostLabel = $derived.by(() => {
+		if (!hostInfo) return '';
+		const isMeaningful = (v: string | undefined) => {
+			const t = (v || '').trim();
+			return t && t.toLowerCase() !== 'unknown';
+		};
+		const h = isMeaningful(hostInfo.hostname) ? hostInfo.hostname.trim() : '';
+		const ip = isMeaningful(hostInfo.ipAddress) ? hostInfo.ipAddress.trim() : '';
+		if (h && ip && h !== ip) return `${h} (${ip})`;
+		return h || ip;
+	});
 
 	// Reactive environment list from store
 	let envList = $derived($environments);
@@ -448,6 +464,16 @@
 
 	{#if hostInfo}
 		<span class="text-border">|</span>
+
+		<!-- Hostname / IP (#962) — first info segment after the env dropdown.
+		     Hidden on narrow viewports to keep the strip readable. -->
+		{#if hostLabel}
+			<div class="hidden xl:flex items-center gap-1" title="Daemon hostname / IP">
+				<Server class="{iconSizeClass()}" />
+				<span>{hostLabel}</span>
+			</div>
+			<span class="hidden xl:inline text-border">|</span>
+		{/if}
 
 		<!-- Platform/OS -->
 		<span class="hidden md:inline">{hostInfo.platform} {hostInfo.arch}</span>

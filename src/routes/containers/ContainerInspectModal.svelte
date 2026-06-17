@@ -5,7 +5,8 @@
 	import * as Tabs from '$lib/components/ui/tabs';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Loader2, Box, Info, Layers, Cpu, MemoryStick, HardDrive, Network, Shield, Settings2, Code, Copy, Check, XCircle, Activity, Wifi, Pencil, RefreshCw, X, FolderOpen, Moon, Tags, ExternalLink, Gpu, Globe, Link, Unlink } from 'lucide-svelte';
+	import { Loader2, Box, Info, Layers, Cpu, MemoryStick, HardDrive, Network, Shield, Settings2, Code, Copy, Check, XCircle, Activity, Wifi, Pencil, RefreshCw, X, FolderOpen, Moon, Tags, ExternalLink, Gpu, Globe, Link, Unlink, Play, Square as SquareIcon, RotateCw, Trash2 } from 'lucide-svelte';
+	import ConfirmPopover from '$lib/components/ConfirmPopover.svelte';
 	import * as Select from '$lib/components/ui/select';
 	import { toast } from 'svelte-sonner';
 	import * as Tooltip from '$lib/components/ui/tooltip';
@@ -26,9 +27,73 @@
 		containerId: string;
 		containerName?: string;
 		onRename?: (newName: string) => void;
+		// Lifecycle handlers from the parent (#461). Non-destructive actions
+		// return a promise so the modal can refresh inspect data afterwards;
+		// onRemove and onEdit close the modal themselves.
+		onStart?: (id: string) => Promise<void> | void;
+		onStop?: (id: string) => Promise<void> | void;
+		onRestart?: (id: string) => Promise<void> | void;
+		onRemove?: (id: string) => Promise<void> | void;
+		onEdit?: (id: string) => void;
 	}
 
-	let { open = $bindable(), containerId, containerName, onRename }: Props = $props();
+	let { open = $bindable(), containerId, containerName, onRename, onStart, onStop, onRestart, onRemove, onEdit }: Props = $props();
+
+	// Confirmation-popover open state for the destructive actions in the header.
+	let confirmStopOpen = $state(false);
+	let confirmRestartOpen = $state(false);
+	let confirmRemoveOpen = $state(false);
+
+	// Per-action in-flight flags so the corresponding icon can spin/pulse.
+	let starting = $state(false);
+	let stopping = $state(false);
+	let restarting = $state(false);
+
+	async function doStart() {
+		if (!onStart) return;
+		starting = true;
+		try {
+			await onStart(containerId);
+			await fetchContainerInspect();
+		} finally {
+			starting = false;
+		}
+	}
+	async function doStop() {
+		if (!onStop) return;
+		stopping = true;
+		try {
+			await onStop(containerId);
+			await fetchContainerInspect();
+		} finally {
+			stopping = false;
+		}
+	}
+	async function doRestart() {
+		if (!onRestart) return;
+		restarting = true;
+		try {
+			await onRestart(containerId);
+			await fetchContainerInspect();
+		} finally {
+			restarting = false;
+		}
+	}
+	async function doRemove() {
+		if (!onRemove) return;
+		try {
+			await onRemove(containerId);
+		} finally {
+			// Always close: the container is either gone or the parent toasted an error.
+			open = false;
+		}
+	}
+	function doEdit() {
+		if (!onEdit) return;
+		// Close the inspect modal first so EditContainerModal isn't stacked on top.
+		open = false;
+		onEdit(containerId);
+	}
 
 	// Rename state
 	let isEditing = $state(false);
@@ -652,16 +717,91 @@
 					</span>
 				{/if}
 				{#if containerData && !loading}
-					<Button
-						variant="outline"
-						size="sm"
-						onclick={() => showRawJson = true}
-						title="View raw inspect data"
-						class="ml-auto mr-6"
-					>
-						<Code class="w-4 h-4 mr-1.5" />
-						Inspect
-					</Button>
+					<div class="ml-auto mr-6 flex items-center gap-1">
+						<!-- Lifecycle actions (#461). Mirrors the per-row action set on the containers page;
+						     non-destructive actions refresh the inspect data in place, Delete closes the modal. -->
+						{#if containerData.State?.Running}
+							{#if onStop}
+								<ConfirmPopover
+									open={confirmStopOpen}
+									action="Stop"
+									itemType="container"
+									itemName={displayName || containerId.slice(0, 12)}
+									title="Stop"
+									onConfirm={doStop}
+									onOpenChange={(o) => confirmStopOpen = o}
+								>
+									{#snippet children({ open })}
+										<SquareIcon class="w-4 h-4 {open ? 'text-destructive' : 'text-muted-foreground hover:text-destructive'} {stopping ? 'animate-pulse text-destructive' : ''}" />
+									{/snippet}
+								</ConfirmPopover>
+							{/if}
+							{#if onRestart}
+								<ConfirmPopover
+									open={confirmRestartOpen}
+									action="Restart"
+									itemType="container"
+									itemName={displayName || containerId.slice(0, 12)}
+									title="Restart"
+									variant="secondary"
+									onConfirm={doRestart}
+									onOpenChange={(o) => confirmRestartOpen = o}
+								>
+									{#snippet children({ open })}
+										<RotateCw class="w-4 h-4 {open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'} {restarting ? 'animate-spin text-foreground' : ''}" />
+									{/snippet}
+								</ConfirmPopover>
+							{/if}
+						{:else}
+							{#if onStart}
+								<button
+									type="button"
+									onclick={doStart}
+									title="Start"
+									disabled={starting}
+									class="p-1 rounded hover:bg-muted transition-colors cursor-pointer disabled:opacity-50"
+								>
+									<Play class="w-4 h-4 {starting ? 'animate-pulse text-emerald-500' : 'text-muted-foreground hover:text-emerald-500'}" />
+								</button>
+							{/if}
+						{/if}
+						{#if onEdit}
+							<button
+								type="button"
+								onclick={doEdit}
+								title="Edit"
+								class="p-1 rounded hover:bg-muted transition-colors cursor-pointer"
+							>
+								<Pencil class="w-4 h-4 text-muted-foreground hover:text-foreground" />
+							</button>
+						{/if}
+						{#if onRemove}
+							<ConfirmPopover
+								open={confirmRemoveOpen}
+								action="Delete"
+								itemType="container"
+								itemName={displayName || containerId.slice(0, 12)}
+								title="Delete"
+								variant="destructive"
+								onConfirm={doRemove}
+								onOpenChange={(o) => confirmRemoveOpen = o}
+							>
+								{#snippet children({ open })}
+									<Trash2 class="w-4 h-4 {open ? 'text-destructive' : 'text-muted-foreground hover:text-destructive'}" />
+								{/snippet}
+							</ConfirmPopover>
+						{/if}
+						<Button
+							variant="outline"
+							size="sm"
+							onclick={() => showRawJson = true}
+							title="View raw inspect data"
+							class="ml-1"
+						>
+							<Code class="w-4 h-4 mr-1.5" />
+							Inspect
+						</Button>
+					</div>
 				{/if}
 			</Dialog.Title>
 		</Dialog.Header>

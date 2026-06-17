@@ -593,9 +593,12 @@ import type { FavoriteGroup } from '../api/preferences/favorite-groups/+server';
 		try {
 			const response = await fetch(appendEnvParam('/api/containers', envId));
 			const allContainers = await response.json();
-			// Show running and exited containers (logs are available for both)
+			// Docker keeps the log file across state transitions, so every
+			// state has logs to serve. Excluding `restarting` made crash-
+			// looping containers unselectable mid-loop (#227); paused/
+			// created/dead are listed for the same reason.
 			const loggableContainers = allContainers.filter((c: ContainerInfo) =>
-				c.state === 'running' || c.state === 'exited'
+				['running', 'exited', 'restarting', 'paused', 'created', 'dead'].includes(c.state)
 			);
 
 			// Before updating containers, capture current running set for grouped mode change detection

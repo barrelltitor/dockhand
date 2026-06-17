@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.0.34",
+    "date": "2026-06-17",
+    "changes": [
+      { "type": "feature", "text": "raw file download — no tar wrapping (#1180)" },
+      { "type": "fix", "text": "update modal stuck after closing mid-pull (#1094)" },
+      { "type": "fix", "text": "vulnerability scans on Podman hosts (direct TCP and Hawser) (#1076)" },
+      { "type": "fix", "text": "crash-looping containers now appear in the logs page list (#227)" },
+      { "type": "feature", "text": "filter containers by \"Update available\" (#1063)" },
+      { "type": "feature", "text": "show hostname / IP of the selected environment in the top header (#962)" },
+      { "type": "feature", "text": "internal auth and validation hardening and dependency bumps" },
+      { "type": "feature", "text": "Traefik and Pangolin integration — surface proxy URLs on container and stack panels (#2)" },
+      { "type": "feature", "text": "release-notes link next to images with updates available (#538)" },
+      { "type": "feature", "text": "lifecycle action buttons in the container details modal (#461)" },
+      { "type": "feature", "text": "template library — browse and deploy compose templates from configurable sources (#48)" },
+      { "type": "fix", "text": "file browser fails on containers with ls in /usr/sbin (#1185)" }
+    ],
+    "imageTag": "fnsys/dockhand:v1.0.34"
+  },
+  {
     "version": "1.0.33",
     "date": "2026-06-15",
     "changes": [

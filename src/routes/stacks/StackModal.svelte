@@ -35,11 +35,13 @@
 		open: boolean;
 		mode: 'create' | 'edit';
 		stackName?: string; // Required for edit mode, optional for create
+		initialCompose?: string; // Pre-fill compose content (for library deploy)
+		initialStackName?: string; // Pre-fill stack name (for library deploy)
 		onClose: () => void;
 		onSuccess: () => void; // Called after create or save
 	}
 
-	let { open = $bindable(), mode: propMode, stackName: propStackName = '', onClose, onSuccess }: Props = $props();
+	let { open = $bindable(), mode: propMode, stackName: propStackName = '', initialCompose, initialStackName, onClose, onSuccess }: Props = $props();
 
 	// Local effective state - can transition from create → edit after failed deploy
 	let mode = $state(propMode);
@@ -1222,8 +1224,11 @@
 					validateEnvVars();
 				});
 			} else if (mode === 'create') {
-				// Set default compose content for create mode
-				composeContent = defaultCompose;
+				// Set default compose content for create mode (library templates override default)
+				composeContent = initialCompose || defaultCompose;
+				if (initialStackName) {
+					newStackName = initialStackName;
+				}
 				isDirty = false; // Reset dirty flag for new modal
 				loading = false;
 				// Auto-validate default compose
@@ -1350,6 +1355,9 @@
 									Create compose stack
 								{:else}
 									{stackName}
+								{/if}
+								{#if $currentEnvironment}
+									<span class="font-medium">on <span class="text-amber-600 dark:text-amber-400">{$currentEnvironment.name}</span></span>
 								{/if}
 							</Dialog.Title>
 							<Dialog.Description class="text-xs text-zinc-500 dark:text-zinc-400">

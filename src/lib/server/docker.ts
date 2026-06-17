@@ -5086,18 +5086,20 @@ export async function listContainerDirectory(
 	// Sanitize path to prevent command injection
 	const safePath = path.replace(/[;&|`$(){}[\]<>'"\\]/g, '');
 
-	// Commands to try in order of preference
+	// Commands to try in order of preference (includes /usr/sbin/ls for Wolfi/busybox images)
 	const commands = useSimpleLs
 		? [
 			['ls', '-la', safePath],
 			['/bin/ls', '-la', safePath],
 			['/usr/bin/ls', '-la', safePath],
+			['/usr/sbin/ls', '-la', safePath],
 		]
 		: [
 			['ls', '-la', '--time-style=long-iso', safePath],
 			['ls', '-la', safePath],
 			['/bin/ls', '-la', safePath],
 			['/usr/bin/ls', '-la', safePath],
+			['/usr/sbin/ls', '-la', safePath],
 		];
 
 	let lastError: Error | null = null;
@@ -5180,7 +5182,7 @@ export async function statContainerPath(
 	containerId: string,
 	path: string,
 	envId?: number | null
-): Promise<{ name: string; size: number; mode: number; mtime: string; linkTarget?: string }> {
+): Promise<{ name: string; size: number; mode: number; mtime: string; linkTarget?: string; isDir: boolean }> {
 	// Sanitize path
 	const safePath = path.replace(/[;&|`$(){}[\]<>'"\\]/g, '');
 
@@ -5202,7 +5204,10 @@ export async function statContainerPath(
 	}
 
 	const statJson = Buffer.from(statHeader, 'base64').toString('utf-8');
-	return JSON.parse(statJson);
+	const stat = JSON.parse(statJson);
+	// Go's os.FileMode encodes the file type in the high bits. ModeDir = 1<<31.
+	// Docker emits mode in that format, so the directory bit lives at 0x80000000.
+	return { ...stat, isDir: (stat.mode & 0x80000000) !== 0 };
 }
 
 /**
@@ -5753,6 +5758,22 @@ export async function getVolumeArchive(
 
 	return { response, containerId };
 	// Note: Container is kept alive for reuse. Cache TTL will handle cleanup.
+}
+
+/**
+ * Stat a path inside a volume via the helper container.
+ * Returns the same shape as statContainerPath (#1180 raw download needs isDir).
+ */
+export async function statVolumePath(
+	volumeName: string,
+	path: string,
+	envId?: number | null,
+	readOnly: boolean = true
+): Promise<{ name: string; size: number; mode: number; mtime: string; linkTarget?: string; isDir: boolean }> {
+	const containerId = await getOrCreateVolumeHelperContainer(volumeName, envId, readOnly);
+	const safePath = path.replace(/[;&|`$(){}[\]<>'"\\]/g, '');
+	const fullPath = `${VOLUME_MOUNT_PATH}${safePath.startsWith('/') ? safePath : '/' + safePath}`;
+	return statContainerPath(containerId, fullPath, envId);
 }
 
 /**

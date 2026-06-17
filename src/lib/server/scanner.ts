@@ -16,13 +16,15 @@ import {
 } from './docker';
 import { getEnvironment, getEnvSetting, getSetting } from './db';
 import { sendEventNotification } from './notifications';
+import { detectRemoteSocketPath } from './scanner-socket-detect';
 import {
 	getHostDockerSocket,
 	getHostDataDir,
 	extractUidFromSocketPath,
 	getOwnDockerHost,
 	getOwnExtraHosts,
-	getOwnNetworkMode
+	getOwnNetworkMode,
+	getOwnAllNetworks
 } from './host-path';
 import { resolve } from 'node:path';
 import { mkdir, chown, rm } from 'node:fs/promises';
@@ -632,7 +634,7 @@ async function runScannerContainerCore(
 	let rootlessUid: string | undefined;
 	let scannerNetworkMode: string | undefined;
 	let scannerDockerHost: string | undefined;
-	const scannerExtraHosts = !isHawser ? getOwnExtraHosts() ?? undefined : undefined;
+	let scannerExtraHosts = !isHawser ? getOwnExtraHosts() ?? undefined : undefined;
 
 	// Check if Dockhand itself uses TCP to reach Docker (e.g., socket proxy).
 	// Detected at startup from Dockhand's own container inspect data.
@@ -641,9 +643,19 @@ async function runScannerContainerCore(
 	const ownDockerHost = getOwnDockerHost();
 
 	if (!isHawser && ownDockerHost?.startsWith('tcp://')) {
-		// TCP mode: scanner uses the same DOCKER_HOST + network as Dockhand
+		// TCP mode: scanner uses the same DOCKER_HOST + network as Dockhand.
 		scannerDockerHost = ownDockerHost;
 		scannerNetworkMode = getOwnNetworkMode() ?? undefined;
+		const allNets = getOwnAllNetworks();
+		if (allNets.length > 1) {
+			// Multiple custom networks — if socket-proxy lives on a network
+			// other than the one we picked, DNS will fail. Make the choice
+			// visible so users with split-network setups can colocate
+			// socket-proxy with Dockhand on the primary network (#1011).
+			console.warn(
+				`[Scanner] Dockhand is on multiple networks (${allNets.join(', ')}); scanner will only join "${scannerNetworkMode}". If DOCKER_HOST=${scannerDockerHost} fails to resolve, put socket-proxy on this network.`
+			);
+		}
 		console.log(
 			`[Scanner] TCP mode (from container inspect) - DOCKER_HOST=${scannerDockerHost}, network=${scannerNetworkMode ?? 'default'}`
 		);
@@ -651,9 +663,35 @@ async function runScannerContainerCore(
 			console.log(`[Scanner] Reusing ExtraHosts from Dockhand: ${scannerExtraHosts.join(', ')}`);
 		}
 	} else if (isHawser) {
-		// Hawser: scanner runs on remote host, uses remote host's standard Docker socket
-		hostSocketPath = '/var/run/docker.sock';
-		console.log(`[Scanner] Remote scan via Hawser (${connectionType}) - using standard socket path`);
+		// Hawser: scanner runs on remote host. Detect the actual socket path
+		// because rootless Podman uses /run/user/UID/podman/podman.sock, not
+		// /var/run/docker.sock (#1076). Falls back to the standard path on
+		// detection failure — no regression for stock Docker hosts.
+		hostSocketPath = await detectRemoteSocketPath(envId);
+		console.log(`[Scanner] Remote scan via Hawser (${connectionType}) - detected socket path: ${hostSocketPath}`);
+	} else if (connectionType === 'direct' && env?.host) {
+		// Direct TCP to a remote daemon (e.g. Docker over TCP, Podman over TCP).
+		// The scanner container is created on the REMOTE daemon, not on
+		// Dockhand's host. Binding "/var/run/docker.sock" from Dockhand's
+		// host into a remote-daemon container is nonsense — on remote Docker
+		// it silently creates an empty dir (scans fall back to registry); on
+		// rootless Podman it errors with "mkdir /var/run/docker.sock:
+		// permission denied" (#1076, #1011). Instead, tell the scanner to
+		// talk to the daemon over the same TCP endpoint Dockhand uses.
+		// `host.containers.internal` resolves to the daemon's host from
+		// inside the scanner container on both Docker (with `host-gateway`)
+		// and Podman (built-in).
+		scannerDockerHost = `tcp://host.containers.internal:${env.port}`;
+		// Add the host-gateway mapping so Docker honours the hostname.
+		// Podman recognises host.containers.internal natively; the extra
+		// mapping is harmless there.
+		scannerExtraHosts = [
+			...(scannerExtraHosts ?? []),
+			'host.containers.internal:host-gateway'
+		];
+		console.log(
+			`[Scanner] Direct TCP env (${env.protocol ?? 'http'}://${env.host}:${env.port}) - DOCKER_HOST=${scannerDockerHost} (#1076, #1011)`
+		);
 	} else {
 		// Local socket — detect host socket path (handles rootless Docker)
 		hostSocketPath = getHostDockerSocket();

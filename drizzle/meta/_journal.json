@@ -57,6 +57,13 @@
       "when": 1781158702731,
       "tag": "0007_add_synced_files",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1781620376161,
+      "tag": "0008_add_template_sources",
+      "breakpoints": true
     }
   ]
 }
